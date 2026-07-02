@@ -1,0 +1,576 @@
+package org.minimarex.casino;
+
+import android.Manifest;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.View;
+import android.widget.Button;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
+import androidx.viewpager.widget.ViewPager;
+
+import com.google.android.material.tabs.TabLayout;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.minimarex.minimaapi.MinimaAPI;
+import org.minimarex.minimaapi.MinimaAPIMessages;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Native Zero Edge Casino. Tabs: PLAY / HOUSE / MY BETS / HISTORY. Talks to the local Minima Core
+ * node over the broadcast-Intent IPC ({@link NodeApi}) and runs the same commit-reveal contract as
+ * the dapp, so it's interoperable with it (identical script address).
+ */
+public class MainActivity extends AppCompatActivity {
+
+    public static final int TAB_PLAY = 0, TAB_HOUSE = 1, TAB_MYBETS = 2, TAB_HISTORY = 3;
+
+    /** True while the Activity is in the foreground. The background CasinoService checks this and
+     *  skips auto-processing when we're foreground, so the two never post competing reveal/resolve
+     *  transactions for the same coin. */
+    public static volatile boolean FOREGROUND = false;
+
+    private NodeApi node;
+    private SecretStore secrets;
+    private CasinoTxn txn;
+    private AutoProcessor auto;
+
+    private BaseView[] views;
+    private ViewPager pager;
+    private TextView balanceTv, blockTv, tickerTv;
+    private View pairingBanner, liveDot;
+    private Button soundBtn;
+    private BroadcastReceiver notifyReceiver;
+
+    // ----- activity log -----
+    public static final int LOG_INFO = 0, LOG_OK = 1, LOG_WARN = 2, LOG_ERR = 3;
+    private final java.util.ArrayDeque<String> logLines = new java.util.ArrayDeque<>();
+    // pending-confirmation tracking (so the slow 3-4 block confirm shows progress)
+    private static final int PEND_NONE = 0, PEND_CREATE = 1, PEND_TAKE = 2;
+    private int pendingType = PEND_NONE;
+    private String pendingDesc = "";
+    private int pendingSinceBlock = 0;
+    private final Set<String> pendingBaselineIds = new HashSet<>();   // my bet coinids when the create/take was posted
+
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private final Runnable reloadTask = this::reload;
+
+    // identity
+    private String myPubkey = "", myHexAddr = "";
+    private final Set<String> myKeys = new HashSet<>();
+    private boolean identityReady = false;
+
+    // chain / bet state
+    private int chainBlock = 0;
+    private String balance = "0";
+    private final List<Bet> bets = new ArrayList<>();
+    private final List<ResolvedBet> history = new ArrayList<>();
+    private boolean serviceStarted = false;
+    // last reload's bets that are mine (coinid -> bet), to detect ones the counterparty resolved
+    private final Map<String, Bet> prevMineBets = new HashMap<>();
+    private final Set<String> reconciled = new HashSet<>();
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        Theme.load(this);
+        setContentView(R.layout.activity_main);
+
+        View root = findViewById(R.id.main);
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
+            androidx.core.graphics.Insets bars =
+                    insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return insets;
+        });
+
+        balanceTv = findViewById(R.id.balance);
+        blockTv = findViewById(R.id.blockNo);
+        tickerTv = findViewById(R.id.ticker);
+        liveDot = findViewById(R.id.liveDot);
+        pairingBanner = findViewById(R.id.pairingBanner);
+        soundBtn = findViewById(R.id.btnSound);
+        tickerTv.setOnClickListener(v -> showLogDialog());
+
+        secrets = new SecretStore(this);
+        loadHistory();
+
+        node = new NodeApi(this, enabled -> setPaired(enabled));
+        CasinoContract.register(node);
+
+        // Tabs
+        views = new BaseView[]{ new PlayView(this), new HouseView(this), new MyBetsView(this), new HistoryView(this) };
+        pager = findViewById(R.id.pager);
+        pager.setAdapter(new MainPager(views, new String[]{"PLAY", "HOUSE", "MY BETS", "HISTORY"}));
+        pager.setOffscreenPageLimit(3);
+        TabLayout tabs = findViewById(R.id.tabs);
+        tabs.setupWithViewPager(pager);
+        pager.addOnPageChangeListener(new ViewPager.SimpleOnPageChangeListener() {
+            @Override public void onPageSelected(int position) { views[position].onShown(); }
+        });
+
+        soundBtn.setOnClickListener(v -> {
+            boolean on = !Theme.sound();
+            Theme.setSound(this, on);
+            updateSoundBtn();
+            if (on) Sfx.chime();     // audible confirmation that sound is working
+        });
+        updateSoundBtn();
+
+        // Live updates from the node.
+        notifyReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context c, Intent intent) {
+                if (!MinimaAPI.checkMinimaID(MainActivity.this, intent)) return;
+                String data = intent.getStringExtra(MinimaAPIMessages.MINIMA_API_NOTIFY_DATA);
+                if (data == null) return;
+                try {
+                    String event = new JSONObject(data).optString("event", "");
+                    if ("NEWBLOCK".equals(event) || "NEWBALANCE".equals(event)) requestReload();
+                } catch (Exception ignored) {}
+            }
+        };
+        ContextCompat.registerReceiver(this, notifyReceiver,
+                new IntentFilter(MinimaAPIMessages.MINIMA_API_NOTIFY), ContextCompat.RECEIVER_EXPORTED);
+
+        requestNotifPermission();
+        loadIdentity();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        FOREGROUND = true;          // we own auto-processing while visible; the service stands down
+        loadHistory();              // pick up any results the background service recorded while away
+        requestReload();
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+        FOREGROUND = false;         // hand auto-processing back to the background service
+    }
+
+    @Override protected void onDestroy() {
+        super.onDestroy();
+        ui.removeCallbacks(reloadTask);
+        if (node != null) node.onDestroy();
+        if (notifyReceiver != null) { try { unregisterReceiver(notifyReceiver); } catch (Exception ignored) {} }
+    }
+
+    // ===== identity =====
+    private void loadIdentity() {
+        node.cmd("getaddress", new NodeApi.Cb() {
+            @Override public void onResult(JSONObject json) {
+                setPaired(true);
+                JSONObject r = json.optJSONObject("response");
+                if (r != null) {
+                    myPubkey = r.optString("publickey", "");
+                    myHexAddr = r.optString("address", "");
+                }
+                loadKeys();
+            }
+            @Override public void onError(String message) { handleErr(message); }
+        });
+    }
+
+    private void loadKeys() {
+        node.cmd("keys", new NodeApi.Cb() {
+            @Override public void onResult(JSONObject json) {
+                myKeys.clear();
+                Object resp = json.opt("response");
+                JSONArray arr = null;
+                if (resp instanceof JSONArray) arr = (JSONArray) resp;
+                else if (resp instanceof JSONObject) arr = ((JSONObject) resp).optJSONArray("keys");
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject k = arr.optJSONObject(i);
+                        if (k != null) {
+                            String pk = k.optString("publickey", "");
+                            if (!pk.isEmpty()) myKeys.add(pk);
+                        }
+                    }
+                }
+                if (!myPubkey.isEmpty()) myKeys.add(myPubkey);
+                identityReady = !myPubkey.isEmpty() && !myHexAddr.isEmpty();
+                txn = new CasinoTxn(node, secrets, myPubkey, myHexAddr);
+                auto = new AutoProcessor(txn);
+                if (identityReady) log("Connected · " + Util.shorten(myHexAddr), LOG_OK);
+                reload();
+            }
+            @Override public void onError(String message) { handleErr(message); }
+        });
+    }
+
+    // ===== loading =====
+    public void reload() {
+        node.cmd("balance", new NodeApi.Cb() {
+            @Override public void onResult(JSONObject json) {
+                JSONArray arr = json.optJSONArray("response");
+                if (arr != null && arr.length() > 0) {
+                    JSONObject b0 = arr.optJSONObject(0);
+                    if (b0 != null) { balance = b0.optString("sendable", "0"); balanceTv.setText(Util.tidyAmount(balance)); }
+                }
+            }
+            @Override public void onError(String message) {}
+        });
+
+        // Fetch the block tip FIRST so the bets pass (cooldown, pending, reconcile) runs against the
+        // current height — not a stale one racing a separate command.
+        node.cmd("block", new NodeApi.Cb() {
+            @Override public void onResult(JSONObject json) {
+                setPaired(true);
+                JSONObject r = json.optJSONObject("response");
+                if (r != null) {
+                    String b = r.optString("block", "");
+                    if (b.isEmpty()) { JSONObject h = r.optJSONObject("header"); if (h != null) b = h.optString("block", ""); }
+                    int prev = chainBlock;
+                    try { chainBlock = Integer.parseInt(b); } catch (Exception ignored) {}
+                    blockTv.setText("#" + chainBlock);
+                    if (chainBlock != prev) pulseDot();
+                }
+                fetchBetsAndProcess();
+            }
+            @Override public void onError(String message) { handleErr(message); fetchBetsAndProcess(); }
+        });
+    }
+
+    /** Pull the casino coins and run the reconcile / auto-process / celebrate pass (block tip known). */
+    private void fetchBetsAndProcess() {
+        // All casino coins at the contract address. Refreshed only on new block (memory: heavy
+        // IPC responses can crash the node — never poll this in a tight loop).
+        node.cmd("coins address:" + CasinoContract.SCRIPT_ADDR, new NodeApi.Cb() {
+            @Override public void onResult(JSONObject json) {
+                setPaired(true);
+                bets.clear();
+                JSONArray arr = json.optJSONArray("response");
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject c = arr.optJSONObject(i);
+                        if (c == null) continue;
+                        Bet bet = new Bet(Coin.from(c));
+                        if (bet.isValid()) bets.add(bet);
+                    }
+                }
+                if (identityReady) reconcileDisappeared();   // surface results the counterparty settled
+                snapshotMine();
+                updatePending();
+                refreshAll();
+                if (auto != null && identityReady) {
+                    auto.process(new ArrayList<>(bets), new HashSet<>(myKeys), chainBlock, autoListener);
+                }
+                celebratePending();   // show the modal for any recorded result whose coin has now left chain
+                maybeStartService();
+            }
+            @Override public void onError(String message) { handleErr(message); }
+        });
+    }
+
+    private final AutoProcessor.Listener autoListener = new AutoProcessor.Listener() {
+        @Override public void onRevealed(Bet bet) {
+            log(bet.gameName() + " — house secret revealed, awaiting player resolve", LOG_OK);
+            requestReload();
+        }
+        @Override public void onResolved(Bet bet, boolean iWon, BigDecimal profit, int result) {
+            log((iWon ? "WON +" : "LOST -") + Util.miniNum(profit) + " · " + bet.gameName()
+                    + " (rolled " + bet.game().pickLabel(result) + ")", iWon ? LOG_OK : LOG_ERR);
+            recordResult(bet, iWon, profit, result, bet.iAmHouse(myKeys));   // triggers the celebration
+            requestReload();
+        }
+        @Override public void onError(String message) { /* transient; will retry next block */ }
+    };
+
+    // ===== result + history =====
+    /**
+     * Record a settled bet. History is the single source of truth for the win/lose celebration:
+     * a freshly-recorded result has celebrated=false, and {@link #celebratePending()} shows the
+     * animated modal+sound for it (whether it was resolved here, by the background service, or
+     * detected on reopen via reconciliation). De-dupes by coinid.
+     */
+    public void recordResult(Bet bet, boolean iWon, BigDecimal profit, int result, boolean isHouse) {
+        if (hasHistory(bet.coinid())) { celebratePending(); return; }   // already recorded (in-memory authoritative)
+        ResolvedBet rb = new ResolvedBet();
+        rb.role = isHouse ? "House" : "Player";
+        rb.game = bet.gameName();
+        rb.range = bet.range;
+        rb.pickIdx = bet.pick;
+        rb.resultIdx = result;
+        rb.pickLabel = bet.game().pickLabel(bet.pick);
+        rb.resultLabel = result >= 0 ? bet.game().pickLabel(result) : "—";
+        rb.won = iWon;
+        rb.profit = Util.miniNum(profit);
+        rb.coinid = bet.coinid();
+        rb.time = System.currentTimeMillis();
+        rb.celebrated = false;
+        history.add(0, rb);
+        while (history.size() > 50) history.remove(history.size() - 1);
+        saveHistory();
+        views[TAB_HISTORY].refresh();
+        celebratePending();
+    }
+
+    /**
+     * Show the animated win/lose modal for the newest result whose bet has actually LEFT the chain
+     * (its coin is gone), so the celebration coincides with the card disappearing from MY BETS —
+     * never while the bet still looks live. Results whose coin is still on-chain are left for a
+     * later reload.
+     */
+    public void celebratePending() {
+        Set<String> live = new HashSet<>();
+        for (Bet b : bets) live.add(b.coinid());
+        ResolvedBet target = null;
+        for (ResolvedBet r : history) {
+            if (r.celebrated) continue;
+            if (r.coinid != null && live.contains(r.coinid)) continue;   // bet still live — wait
+            if (target == null) target = r;
+            r.celebrated = true;
+        }
+        if (target == null) return;
+        saveHistory();
+        CasinoContract.Game game = CasinoContract.Game.byRange(target.range);
+        int pick = target.pickIdx >= 0 ? target.pickIdx : 0;
+        int result = target.resultIdx >= 0 ? target.resultIdx : (target.won ? pick : (pick + 1) % game.range);
+        ResultOverlay.show(this, game, pick, result, target.won, target.profit);
+    }
+
+    private void loadHistory() {
+        history.clear();
+        String json = secrets.history();
+        if (json == null) return;
+        try {
+            JSONArray arr = new JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o != null) history.add(ResolvedBet.from(o));
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void saveHistory() {
+        JSONArray arr = new JSONArray();
+        for (ResolvedBet r : history) arr.put(r.toJson());
+        secrets.putHistory(arr.toString());
+    }
+
+    private boolean hasHistory(String coinid) {
+        for (ResolvedBet r : history) if (coinid.equals(r.coinid)) return true;
+        return false;
+    }
+
+    // ===== result reconciliation (the counterparty resolved the bet) =====
+    /** Snapshot the bets that are mine this reload so we can spot ones that vanish next reload. */
+    private void snapshotMine() {
+        prevMineBets.clear();
+        for (Bet b : bets) if (b.isMine(myKeys)) prevMineBets.put(b.coinid(), b);
+    }
+
+    /** A phase-2 bet of mine that disappeared was resolved by the other side — surface the result. */
+    private void reconcileDisappeared() {
+        if (reconciled.size() > 300) reconciled.clear();   // bounded; hasHistory() still guards re-celebration
+        Set<String> current = new HashSet<>();
+        for (Bet b : bets) current.add(b.coinid());
+        for (Bet prev : new ArrayList<>(prevMineBets.values())) {
+            if (current.contains(prev.coinid())) continue;   // still on-chain (or just advanced phase)
+            if (prev.phase != 2) continue;                   // only a resolved phase-2 coin yields a result
+            reconcileBet(prev);
+        }
+    }
+
+    /**
+     * Decide win/lose for a settled bet by whether the pot landed back at MY address (the winner
+     * receives the whole pot; the loser receives nothing). Works for house or player without needing
+     * the counterparty's secret. The exact rolled number is only knowable when I won as player or
+     * lost as house (rolled == pick); otherwise we show a representative non-pick value.
+     */
+    private void reconcileBet(Bet prev) {
+        final String id = prev.coinid();
+        if (reconciled.contains(id) || hasHistory(id)) { reconciled.add(id); return; }
+        reconciled.add(id);
+        final boolean isHouse = prev.iAmHouse(myKeys);
+        final String myAddr = isHouse ? prev.houseAddr : prev.playerAddr;
+        final BigDecimal total = Util.dec(prev.totalAmount);
+        if (myAddr == null || myAddr.isEmpty()) return;
+        node.cmd("coins address:" + myAddr, new NodeApi.Cb() {
+            @Override public void onResult(JSONObject json) {
+                boolean iGotPot = false;
+                JSONArray arr = json.optJSONArray("response");
+                if (arr != null) for (int i = 0; i < arr.length(); i++) {
+                    JSONObject c = arr.optJSONObject(i);
+                    if (c == null) continue;
+                    Coin coin = Coin.from(c);
+                    if (coin.hasState()) continue;                       // payout coins carry no state
+                    if (coin.created >= 0 && coin.created < prev.coin.created) continue;  // pre-existing
+                    if (Util.dec(coin.amount).compareTo(total) == 0) { iGotPot = true; break; }
+                }
+                boolean iWon = iGotPot;
+                boolean playerWon = isHouse ? !iWon : iWon;
+                int result = playerWon ? prev.pick : nonPick(prev);   // rolled == pick iff player won
+                BigDecimal profit = pnl(prev, iWon, isHouse);
+                log((iWon ? "WON +" : "LOST -") + Util.miniNum(profit) + " · " + prev.gameName()
+                        + " (settled by " + (isHouse ? "player" : "house") + ")", iWon ? LOG_OK : LOG_ERR);
+                recordResult(prev, iWon, profit, result, isHouse);   // triggers the celebration
+                requestReload();
+            }
+            @Override public void onError(String message) { reconciled.remove(id); }  // allow a retry
+        });
+    }
+
+    private static int nonPick(Bet b) {
+        int p = Math.max(0, b.pick);
+        return b.range <= 1 ? 0 : (p + 1) % b.range;
+    }
+
+    private static BigDecimal pnl(Bet bet, boolean iWon, boolean isHouse) {
+        BigDecimal betAmt = Util.dec(bet.betAmount);
+        BigDecimal winnings = betAmt.multiply(BigDecimal.valueOf(bet.payout));
+        if (iWon) return isHouse ? betAmt : winnings.subtract(betAmt);
+        return isHouse ? betAmt.multiply(BigDecimal.valueOf(bet.payout - 1L)) : betAmt;
+    }
+
+    // ===== service =====
+    private void maybeStartService() {
+        if (serviceStarted || !identityReady) return;
+        serviceStarted = true;
+        try { ContextCompat.startForegroundService(this, new Intent(this, CasinoService.class)); }
+        catch (Exception ignored) {}
+        try { AutoProcessWorker.schedule(this); } catch (Exception ignored) {}
+    }
+
+    // ===== ui helpers =====
+    private void refreshAll() { for (BaseView v : views) v.refresh(); }
+
+    private void updateSoundBtn() { soundBtn.setText(Theme.sound() ? "SND" : "MUTE"); }
+
+    private void setPaired(boolean paired) {
+        pairingBanner.setVisibility(paired ? View.GONE : View.VISIBLE);
+    }
+
+    private void handleErr(String message) {
+        if (NodeApi.ERR_NOT_ENABLED.equals(message)) {
+            setPaired(false);
+            log("Enable Zero Edge Casino in Minima Core → Apps", LOG_WARN);
+        }
+    }
+
+    private void requestNotifPermission() {
+        if (Build.VERSION.SDK_INT >= 33
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+        }
+    }
+
+    /** Coalesce bursts of NEWBLOCK/NEWBALANCE into a single reload. */
+    public void requestReload() {
+        ui.removeCallbacks(reloadTask);
+        ui.postDelayed(reloadTask, 400);
+    }
+
+    public void toast(String msg) { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show(); }
+
+    // ===== activity log =====
+    /** Append a timestamped, colour-coded line to the activity log and the always-visible ticker. */
+    public void log(String msg, int type) {
+        String stamp = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                .format(new java.util.Date());
+        String line = stamp + "  " + msg;
+        logLines.addFirst(line);
+        while (logLines.size() > 60) logLines.removeLast();
+        if (tickerTv != null) {
+            tickerTv.setTextColor(logColor(type));
+            tickerTv.setText((type == LOG_WARN ? "⏳ " : type == LOG_ERR ? "✕ " : type == LOG_OK ? "✓ " : "› ") + msg);
+        }
+    }
+
+    private int logColor(int type) {
+        switch (type) {
+            case LOG_OK: return Theme.green();
+            case LOG_WARN: return Theme.amber();
+            case LOG_ERR: return Theme.red();
+            default: return Theme.cyan();
+        }
+    }
+
+    private void showLogDialog() {
+        StringBuilder sb = new StringBuilder();
+        for (String l : logLines) sb.append(l).append('\n');
+        if (sb.length() == 0) sb.append("No activity yet.");
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Activity log")
+                .setMessage(sb.toString())
+                .setPositiveButton("Close", null)
+                .show();
+    }
+
+    private void pulseDot() {
+        if (liveDot == null) return;
+        liveDot.animate().cancel();
+        liveDot.setAlpha(1f);
+        liveDot.animate().alpha(0.25f).setDuration(900).start();
+    }
+
+    // ===== pending-confirmation feedback =====
+    /** Called by the create/take flows once a tx is posted, so the wait shows live progress. */
+    public void markPending(int type, String desc) {
+        pendingType = type;
+        pendingDesc = desc;
+        pendingSinceBlock = chainBlock;
+        pendingBaselineIds.clear();
+        for (Bet b : bets) if (b.isMine(myKeys)) pendingBaselineIds.add(b.coinid());
+        log(desc + " — waiting for confirmation…", LOG_WARN);
+    }
+
+    /** Run each reload: detect when a pending create/take has confirmed, else show elapsed blocks. */
+    private void updatePending() {
+        if (pendingType == PEND_NONE) return;
+        boolean confirmed = false;   // a NEW bet of mine appeared since we posted
+        for (Bet b : bets) if (b.isMine(myKeys) && !pendingBaselineIds.contains(b.coinid())) { confirmed = true; break; }
+        if (confirmed) {
+            log(pendingDesc + " confirmed on-chain!", LOG_OK);
+            pendingType = PEND_NONE;
+            return;
+        }
+        int elapsed = Math.max(0, chainBlock - pendingSinceBlock);
+        if (elapsed >= 10) {           // give up nagging after ~10 blocks
+            log(pendingDesc + " — still not seen after " + elapsed + " blocks. Check Pending/stuck txns.", LOG_ERR);
+            pendingType = PEND_NONE;
+            return;
+        }
+        log(pendingDesc + " — confirming, " + elapsed + " block" + (elapsed == 1 ? "" : "s")
+                + " elapsed (#" + chainBlock + ")", LOG_WARN);
+    }
+
+    public int pendingCreate() { return PEND_CREATE; }
+    public int pendingTake() { return PEND_TAKE; }
+
+    public void switchTab(int tab) { if (pager != null) pager.setCurrentItem(tab, true); }
+
+    // ===== accessors for the tab views =====
+    public NodeApi node() { return node; }
+    public SecretStore secrets() { return secrets; }
+    public CasinoTxn txn() { return txn; }
+    public AutoProcessor auto() { return auto; }
+    public List<Bet> bets() { return bets; }
+    public List<ResolvedBet> history() { return history; }
+    public Set<String> myKeys() { return myKeys; }
+    public int chainBlock() { return chainBlock; }
+    public String myPubkey() { return myPubkey; }
+    public String myHexAddr() { return myHexAddr; }
+    public boolean identityReady() { return identityReady; }
+    public String balance() { return balance; }
+}

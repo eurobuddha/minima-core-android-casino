@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Red casino chip with cream edge spots, gold center and a dark diamond. Centred in the
+     adaptive-icon safe zone (radius ~30 around 54,54). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- chip body -->
+    <path android:fillColor="#D7263D"
+        android:pathData="M54,24 A30,30 0 1,0 54,84 A30,30 0 1,0 54,24 Z" />
+
+    <!-- 8 cream edge spots -->
+    <path android:fillColor="#F5F0E1" android:pathData="M54,28 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z" />
+    <path android:fillColor="#F5F0E1" android:pathData="M72.4,35.6 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z" />
+    <path android:fillColor="#F5F0E1" android:pathData="M80,54 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z" />
+    <path android:fillColor="#F5F0E1" android:pathData="M72.4,72.4 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z" />
+    <path android:fillColor="#F5F0E1" android:pathData="M54,80 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z" />
+    <path android:fillColor="#F5F0E1" android:pathData="M35.6,72.4 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z" />
+    <path android:fillColor="#F5F0E1" android:pathData="M28,54 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z" />
+    <path android:fillColor="#F5F0E1" android:pathData="M35.6,35.6 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z" />
+
+    <!-- inner ring -->
+    <path android:strokeColor="#F5F0E1" android:strokeWidth="3" android:fillColor="#00000000"
+        android:pathData="M54,34 A20,20 0 1,0 54,74 A20,20 0 1,0 54,34 Z" />
+
+    <!-- gold center -->
+    <path android:fillColor="#FFD700"
+        android:pathData="M54,40 A14,14 0 1,0 54,68 A14,14 0 1,0 54,40 Z" />
+
+    <!-- dark diamond (zero-edge mark) -->
+    <path android:fillColor="#0A0E1A"
+        android:pathData="M54,46 L62,54 L54,62 L46,54 Z" />
+</vector>
