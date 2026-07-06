@@ -1,8 +1,8 @@
-package org.minimarex.casino;
+package com.eurobuddha.casino;
 
 import java.util.Set;
 
-import static org.minimarex.casino.CasinoContract.*;
+import static com.eurobuddha.casino.CasinoContract.*;
 
 /**
  * A casino bet decoded from a contract coin's state. Mirrors the dapp's getState() reads.

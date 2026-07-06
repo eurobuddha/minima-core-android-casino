@@ -1,4 +1,4 @@
-package org.minimarex.casino;
+package com.eurobuddha.casino;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -8,7 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-import static org.minimarex.casino.CasinoContract.*;
+import static com.eurobuddha.casino.CasinoContract.*;
 
 /**
  * Builds, signs and posts the casino's commit-reveal transactions over {@link NodeApi}. Every

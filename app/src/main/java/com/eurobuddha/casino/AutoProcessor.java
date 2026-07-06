@@ -1,4 +1,4 @@
-package org.minimarex.casino;
+package com.eurobuddha.casino;
 
 import java.math.BigDecimal;
 import java.util.Collections;

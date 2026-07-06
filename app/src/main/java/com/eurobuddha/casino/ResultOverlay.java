@@ -1,4 +1,4 @@
-package org.minimarex.casino;
+package com.eurobuddha.casino;
 
 import android.view.Gravity;
 import android.view.View;
@@ -7,7 +7,7 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import static org.minimarex.casino.CasinoContract.Game;
+import static com.eurobuddha.casino.CasinoContract.Game;
 
 /**
  * Full-screen win/lose reveal — the native equivalent of the dapp's flashResult modal. Plays the

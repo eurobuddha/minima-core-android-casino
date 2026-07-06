@@ -1,4 +1,4 @@
-package org.minimarex.casino;
+package com.eurobuddha.casino;
 
 import android.view.Gravity;
 import android.view.View;
@@ -8,7 +8,7 @@ import android.widget.TextView;
 
 import java.math.BigDecimal;
 
-import static org.minimarex.casino.CasinoContract.Game;
+import static com.eurobuddha.casino.CasinoContract.Game;
 
 /** MY BETS tab — bets where I'm house or player, across phases. Auto-processing handles reveal /
  *  resolve; this view also offers manual actions (cancel, resolve, claim timeout). */

@@ -1,4 +1,4 @@
-package org.minimarex.casino;
+package com.eurobuddha.casino;
 
 import android.view.Gravity;
 import android.widget.LinearLayout;

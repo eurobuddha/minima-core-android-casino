@@ -1,4 +1,4 @@
-package org.minimarex.casino;
+package com.eurobuddha.casino;
 
 import android.animation.ValueAnimator;
 import android.content.Context;

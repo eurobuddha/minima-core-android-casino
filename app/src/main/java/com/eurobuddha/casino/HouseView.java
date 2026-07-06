@@ -1,4 +1,4 @@
-package org.minimarex.casino;
+package com.eurobuddha.casino;
 
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -10,7 +10,7 @@ import android.widget.TextView;
 
 import java.math.BigDecimal;
 
-import static org.minimarex.casino.CasinoContract.Game;
+import static com.eurobuddha.casino.CasinoContract.Game;
 
 /** HOUSE tab — create a new bet (phase 0). Port of the dapp's create form. */
 public class HouseView extends BaseView {

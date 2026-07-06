@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'org.minimarex.casino'
+    namespace 'com.eurobuddha.casino'
     compileSdk 36
 
     defaultConfig {
-        applicationId "org.minimarex.casino"
+        applicationId "com.eurobuddha.casino"
         minSdk 28
         targetSdk 35
         versionCode 502

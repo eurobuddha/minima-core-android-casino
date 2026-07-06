@@ -1,4 +1,4 @@
-package org.minimarex.casino;
+package com.eurobuddha.casino;
 
 import org.json.JSONArray;
 import org.json.JSONObject;

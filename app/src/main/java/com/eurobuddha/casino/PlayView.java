@@ -1,4 +1,4 @@
-package org.minimarex.casino;
+package com.eurobuddha.casino;
 
 import android.view.Gravity;
 import android.view.View;
@@ -12,7 +12,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-import static org.minimarex.casino.CasinoContract.Game;
+import static com.eurobuddha.casino.CasinoContract.Game;
 
 /** PLAY tab — open phase-0 bets created by others, available to take. */
 public class PlayView extends BaseView {
