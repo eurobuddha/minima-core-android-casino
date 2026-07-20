@@ -54,7 +54,9 @@ public class CasinoTxn {
                     @Override public void onResult(JSONObject h) {
                         String commit = resp(h);
                         if (commit.isEmpty()) { cb.onFailed("Hash failed"); return; }
-                        secrets.putHouseSecret(commit, secret);
+                        // FUND-SAFETY: the house secret must be durable BEFORE we lock funds — a lost preimage means
+                        // we can never reveal and the player timeout-claims the whole pot. Abort if it didn't persist.
+                        if (!secrets.putHouseSecret(commit, secret)) { cb.onFailed("Could not save the bet secret — aborting to protect your funds"); return; }
                         String state = "{\"0\":\"" + myPubkey + "\",\"1\":\"" + myHexAddr
                                 + "\",\"2\":\"" + commit + "\",\"3\":\"" + game.range
                                 + "\",\"4\":\"" + game.payout + "\",\"5\":\"" + betStr
@@ -87,7 +89,9 @@ public class CasinoTxn {
                     @Override public void onResult(JSONObject h) {
                         String commit = resp(h);
                         if (commit.isEmpty()) { cb.onFailed("Hash failed"); return; }
-                        secrets.putPlayerSecret(commit, secret);
+                        // FUND-SAFETY: the player secret must be durable BEFORE we commit the take — a lost preimage
+                        // means we can never resolve and the house timeout-claims the pot. Abort if it didn't persist.
+                        if (!secrets.putPlayerSecret(commit, secret)) { cb.onFailed("Could not save the bet secret — aborting to protect your funds"); return; }
                         findCoins(betAmt, bet.coinid(), new CoinsCb() {
                             @Override public void onCoins(List<Coin> funds, BigDecimal sum) {
                                 buildTake(bet, pick, commit, betAmt, total, funds, sum, cb);

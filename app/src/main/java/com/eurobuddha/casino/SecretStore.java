@@ -40,8 +40,24 @@ public class SecretStore {
         }
     }
 
+    /** Non-critical async write (used for history). */
     public void put(String key, String value) {
         prefs.edit().putString(key, value).apply();
+    }
+
+    /**
+     * FUND-CRITICAL durable write. A commit preimage MUST be provably persisted BEFORE the on-chain send/take that
+     * commits to it — a lost preimage strands the pot to the counterparty's 1500-block timeout claim. {@code apply()}
+     * is asynchronous and swallows write failures, so we use {@code commit()} (synchronous, returns success) and then
+     * READ THE VALUE BACK from durable storage. Returns true only when the secret is confirmed retrievable.
+     */
+    public boolean putDurable(String key, String value) {
+        try {
+            boolean ok = prefs.edit().putString(key, value).commit();
+            return ok && value.equals(prefs.getString(key, null));
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     public String get(String key) {
@@ -52,11 +68,11 @@ public class SecretStore {
         return prefs.contains(key);
     }
 
-    // ---- typed helpers mirroring the dapp key names ----
-    public void putHouseSecret(String commit, String secret) { put("casino_secret_for_" + commit, secret); }
+    // ---- typed helpers mirroring the dapp key names (secrets use the durable path; callers MUST check the result) ----
+    public boolean putHouseSecret(String commit, String secret) { return putDurable("casino_secret_for_" + commit, secret); }
     public String houseSecret(String commit) { return get("casino_secret_for_" + commit); }
 
-    public void putPlayerSecret(String commit, String secret) { put("casino_psecret_for_" + commit, secret); }
+    public boolean putPlayerSecret(String commit, String secret) { return putDurable("casino_psecret_for_" + commit, secret); }
     public String playerSecret(String commit) { return get("casino_psecret_for_" + commit); }
 
     public String history() { return get("casino_history"); }
