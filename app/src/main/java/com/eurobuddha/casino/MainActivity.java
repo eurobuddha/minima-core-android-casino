@@ -392,16 +392,73 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Decide win/lose for a settled bet by whether the pot landed back at MY address (the winner
-     * receives the whole pot; the loser receives nothing). Works for house or player without needing
-     * the counterparty's secret. The exact rolled number is only knowable when I won as player or
-     * lost as house (rolled == pick); otherwise we show a representative non-pick value.
+     * PRIMARY — mechanism B: read the taker's RESOLVE txn for the EXACT rolled result the instant they resolve.
+     * The resolve txn is self-contained: player_secret is in txn.state[13] and the spent phase-2 coin (inputs[0])
+     * still carries FULL state incl. house_secret[12]. So either side computes the exact roll, matched by the
+     * house commit (state[2], which survives every phase). Falls back to pot-detection when the resolve txn isn't
+     * readable (older node without `txpow address:`, or not in the txpowdb yet) — win/lose stays correct there,
+     * only the exact rolled number is approximated.
      */
-    private void reconcileBet(Bet prev) {
+    private void reconcileBet(final Bet prev) {
         final String id = prev.coinid();
         if (reconciled.contains(id) || hasHistory(id)) { reconciled.add(id); return; }
         reconciled.add(id);
         final boolean isHouse = prev.iAmHouse(myKeys);
+        resolveExact(prev, isHouse, id);
+    }
+
+    private void resolveExact(final Bet prev, final boolean isHouse, final String id) {
+        final String want = norm(prev.houseCommit);
+        if (want.isEmpty()) { reconcileByPot(prev, isHouse, id); return; }
+        node.cmd("txpow address:" + CasinoContract.SCRIPT_ADDR, new NodeApi.Cb() {
+            @Override public void onResult(JSONObject json) {
+                JSONObject input = null; String ps = null;
+                JSONArray list = json.optJSONArray("response");
+                if (list != null) for (int i = 0; i < list.length(); i++) {
+                    JSONObject tp = list.optJSONObject(i); if (tp == null) continue;
+                    JSONObject txn = txnOf(tp); if (txn == null) continue;
+                    String p13 = stateOf(txn.optJSONArray("state"), CasinoContract.P_PLAYER_SECRET);
+                    if (p13.isEmpty()) continue;                              // only resolve txns carry state[13]
+                    JSONArray ins = txn.optJSONArray("inputs"); if (ins == null || ins.length() == 0) continue;
+                    JSONObject in0 = ins.optJSONObject(0); if (in0 == null) continue;
+                    if (!norm(in0.optString("address")).equals(norm(CasinoContract.SCRIPT_ADDR))) continue;
+                    if (!norm(stateOf(in0.optJSONArray("state"), CasinoContract.P_HOUSE_COMMIT)).equals(want)) continue;
+                    input = in0; ps = p13; break;
+                }
+                if (input == null) { reconcileByPot(prev, isHouse, id); return; }   // resolve txn not readable yet
+                final String hs = stateOf(input.optJSONArray("state"), CasinoContract.P_HOUSE_SECRET);
+                final int range = parseIntOr(stateOf(input.optJSONArray("state"), CasinoContract.P_RANGE), prev.range);
+                final int pick  = parseIntOr(stateOf(input.optJSONArray("state"), CasinoContract.P_PICK), prev.pick);
+                if (hs.isEmpty() || range <= 0) { reconcileByPot(prev, isHouse, id); return; }
+                final String combined = hs + (ps.startsWith("0x") ? ps.substring(2) : ps);   // hs keeps 0x, ps drops it
+                node.cmd("hash data:" + combined, new NodeApi.Cb() {
+                    @Override public void onResult(JSONObject h) {
+                        String hash = resp(h);
+                        int result;
+                        try { result = (int) (Long.parseLong(hash.substring(2, 10), 16) % range); }
+                        catch (Exception e) { reconcileByPot(prev, isHouse, id); return; }
+                        boolean playerWins = (result == pick);
+                        boolean iWon = isHouse ? !playerWins : playerWins;
+                        BigDecimal profit = pnl(prev, iWon, isHouse);
+                        log((iWon ? "WON +" : "LOST -") + Util.miniNum(profit) + " · " + prev.gameName()
+                                + " (result " + prev.game().pickLabel(result) + ")", iWon ? LOG_OK : LOG_ERR);
+                        recordResult(prev, iWon, profit, result, isHouse);   // EXACT result → triggers celebration
+                        requestReload();
+                    }
+                    @Override public void onError(String m) { reconcileByPot(prev, isHouse, id); }
+                });
+            }
+            @Override public void onError(String message) { reconcileByPot(prev, isHouse, id); }
+        });
+    }
+
+    /**
+     * Fallback — decide win/lose by whether the pot landed back at MY address (the winner receives the whole
+     * pot; the loser receives nothing). Works for house or player without the counterparty's secret. The exact
+     * rolled number is only knowable when I won as player or lost as house (rolled == pick); otherwise we show a
+     * representative non-pick value.
+     */
+    private void reconcileByPot(final Bet prev, final boolean isHouse, final String id) {
         final String myAddr = isHouse ? prev.houseAddr : prev.playerAddr;
         final BigDecimal total = Util.dec(prev.totalAmount);
         if (myAddr == null || myAddr.isEmpty()) return;
@@ -428,6 +485,38 @@ public class MainActivity extends AppCompatActivity {
             }
             @Override public void onError(String message) { reconciled.remove(id); }  // allow a retry
         });
+    }
+
+    private static String norm(String v) {
+        if (v == null) return "";
+        String s = v.toUpperCase();
+        return s.startsWith("0X") ? s.substring(2) : s;
+    }
+    private static int parseIntOr(String v, int def) {
+        if (v == null || v.isEmpty()) return def;
+        try { return Integer.parseInt(v.trim()); } catch (Exception e) { return def; }
+    }
+    private static JSONObject txnOf(JSONObject tp) {
+        JSONObject body = tp.optJSONObject("body");
+        if (body != null) { JSONObject t = body.optJSONObject("txn"); if (t != null) return t; }
+        return tp.optJSONObject("txn");
+    }
+    private static String stateOf(JSONArray st, int port) {
+        if (st == null) return "";
+        for (int i = 0; i < st.length(); i++) {
+            JSONObject e = st.optJSONObject(i);
+            if (e == null) continue;
+            if (e.optInt("port", -1) == port) return e.optString("data", "");
+        }
+        return "";
+    }
+    private static String resp(JSONObject r) {
+        if (r == null || !r.optBoolean("status", false)) return "";
+        JSONObject resp = r.optJSONObject("response");
+        if (resp == null) return "";
+        String v = resp.optString("random", "");
+        if (v.isEmpty()) v = resp.optString("hash", "");
+        return v;
     }
 
     private static int nonPick(Bet b) {
