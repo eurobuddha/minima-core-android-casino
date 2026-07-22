@@ -12,12 +12,13 @@ import android.view.View;
 import android.view.animation.DecelerateInterpolator;
 
 /**
- * A spinning roulette wheel. {@code range} segments (default 36) alternate red / dark,
- * with segment 0 drawn green as the "zero" accent and a gold centre hub. A fixed gold
- * pointer sits at the top (12 o'clock).
+ * A spinning roulette wheel. For the zero-edge game (range 36) it draws 36 pockets in the
+ * authentic single-zero-REMOVED European pocket order, numbered 1-36 with real red/black
+ * colouring — NO green zero (the zero is the house edge; this casino has none). A gold centre
+ * hub and a fixed gold pointer at the top (12 o'clock).
  *
- * <p>{@link #spin(int, Runnable)} accelerates then decelerates the wheel so the pointer
- * lands on segment {@code resultPick}.
+ * <p>{@link #spin(int, Runnable)} accelerates then decelerates the wheel so the pointer lands
+ * on the pocket for the rolled result (on-chain result R, 0-based, shown as number R+1).
  */
 public class RouletteView extends View {
 
@@ -30,6 +31,10 @@ public class RouletteView extends View {
     private final Path tri = new Path();
 
     private static final int DARK = 0xFF181C2A;  // dark "black" segment shade
+    // 36-pocket ZERO-EDGE wheel — authentic European pocket order with the single zero removed (no house edge), 1-36.
+    private static final int[] ORDER = {32,15,19,4,21,2,25,17,34,6,27,13,36,11,30,8,23,10,5,24,16,33,1,20,14,31,9,22,18,29,7,28,12,35,3,26};
+    private static final java.util.HashSet<Integer> RED = new java.util.HashSet<>(java.util.Arrays.asList(1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36));
+    private int orderIndexOf(int number) { for (int i = 0; i < ORDER.length; i++) if (ORDER[i] == number) return i; return 0; }
 
     private int range = 36;
     private float rotation = 0f;                  // current wheel rotation (degrees)
@@ -65,12 +70,14 @@ public class RouletteView extends View {
     public void spin(int resultPick, Runnable onEnd) {
         cancel();
         int pick = ((resultPick % range) + range) % range;
+        // On the 36-pocket wheel the visible segment for result R is where number R+1 sits in the pocket order.
+        int segIdx = (range == 36) ? orderIndexOf(pick + 1) : pick;
 
         float per = 360f / range;
         // Segment i is centred (in wheel-local space) at angle i*per starting from the
-        // top and going clockwise. To bring segment 'pick' under the top pointer, the
-        // wheel must rotate so that -(pick*per + per/2) is at 0deg, plus whole spins.
-        float target = -(pick * per + per / 2f);
+        // top and going clockwise. To bring that segment under the top pointer, the
+        // wheel must rotate so that -(segIdx*per + per/2) is at 0deg, plus whole spins.
+        float target = -(segIdx * per + per / 2f);
         float spins = 360f * 6;                          // 6 full turns for drama
         float finalRot = spins + target;
 
@@ -124,9 +131,9 @@ public class RouletteView extends View {
 
         for (int i = 0; i < range; i++) {
             float start = i * per;
-            if (i == 0)             seg.setColor(Theme.green());   // zero accent
-            else if ((i & 1) == 1)  seg.setColor(Theme.red());
-            else                    seg.setColor(DARK);
+            int num = (range == 36) ? ORDER[i] : (i + 1);   // 1-36, NO zero
+            boolean isRed = (range == 36) ? RED.contains(num) : ((i & 1) == 1);
+            seg.setColor(isRed ? Theme.red() : DARK);
             cv.drawArc(oval, start, per, true, seg);
 
             // number label, upright-ish along the radius
@@ -137,7 +144,7 @@ public class RouletteView extends View {
             cv.save();
             cv.rotate((start + per / 2f) + 90f, lx, ly);
             float baseline = ly - (label.descent() + label.ascent()) / 2f;
-            cv.drawText(String.valueOf(i), lx, baseline, label);
+            cv.drawText(String.valueOf(num), lx, baseline, label);
             cv.restore();
         }
         cv.drawOval(oval, rim);

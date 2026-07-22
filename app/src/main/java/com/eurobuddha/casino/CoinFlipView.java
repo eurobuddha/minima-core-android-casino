@@ -105,10 +105,12 @@ public class CoinFlipView extends View {
         float rx = Math.abs(cos) * r;          // horizontal radius collapses edge-on
         if (rx < 1f) rx = 1f;
 
-        // Which face is up: cos > 0 -> "front" face. We map the front face to the
-        // settled result so the coin ends showing the correct glyph.
+        // FIXED faces: front (cos>=0) is always Heads, back (cos<0) is always Tails — so the coin flips
+        // H/T/H/T naturally as it spins. The landing angle already encodes the result (an extra half-turn
+        // for Tails puts the back face up), so the settled face is correct. (The old `(result==0)==frontUp`
+        // inverted the faces for Tails and drew Heads on a Tails result.)
         boolean frontUp = cos >= 0;
-        boolean showHeads = (result == 0) == frontUp;
+        boolean showHeads = frontUp;
 
         // body
         cv.save();
@@ -140,7 +142,7 @@ public class CoinFlipView extends View {
     public void setIdleFace(int resultPick) {
         cancel();
         result = (resultPick == 1) ? 1 : 0;
-        angle = 0f;
+        angle = (result == 1) ? (float) Math.PI : 0f;   // back face up for Tails so the idle glyph is correct too
         invalidate();
     }
 }
