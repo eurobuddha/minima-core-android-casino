@@ -224,7 +224,7 @@ public class MainActivity extends AppCompatActivity {
                 JSONArray arr = json.optJSONArray("response");
                 if (arr != null && arr.length() > 0) {
                     JSONObject b0 = arr.optJSONObject(0);
-                    if (b0 != null) { balance = b0.optString("sendable", "0"); balanceTv.setText(Util.tidyAmount(balance)); }
+                    if (b0 != null) { balance = b0.optString("sendable", "0"); balanceTv.setText(Util.displayAmount(balance)); }
                 }
             }
             @Override public void onError(String message) {}

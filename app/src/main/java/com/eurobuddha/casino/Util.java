@@ -50,6 +50,23 @@ public final class Util {
         return tidyAmount(v.stripTrailingZeros().toPlainString());
     }
 
+    /** Max decimals shown for a balance/amount in the UI. Minima's native precision (up to 45
+     *  decimals) overflows on-screen fields; cap the DISPLAY only. */
+    public static final int DISPLAY_DECIMALS = 5;
+
+    /** Cap a Minima amount to 5 decimals for DISPLAY ONLY. Rounds DOWN so we never overstate a
+     *  balance. NEVER use for building transactions — send/txnoutput amounts must keep full
+     *  precision; use {@link #miniNum(BigDecimal)} there. */
+    public static String displayAmount(BigDecimal v) {
+        if (v == null) return "0";
+        return tidyAmount(v.setScale(DISPLAY_DECIMALS, java.math.RoundingMode.DOWN).toPlainString());
+    }
+
+    /** String overload of {@link #displayAmount(BigDecimal)}. */
+    public static String displayAmount(String s) {
+        return displayAmount(dec(s));
+    }
+
     /** Parse a possibly-empty amount string to BigDecimal, defaulting to zero. */
     public static BigDecimal dec(String s) {
         try { return (s == null || s.isEmpty()) ? BigDecimal.ZERO : new BigDecimal(s); }
