@@ -77,6 +77,7 @@ public class MainActivity extends AppCompatActivity {
     private String myPubkey = "", myHexAddr = "";
     private final Set<String> myKeys = new HashSet<>();
     private boolean identityReady = false;
+    private boolean cleanedTracking = false;   // balance hygiene sweep runs once per session
 
     // chain / bet state
     private int chainBlock = 0;
@@ -211,9 +212,66 @@ public class MainActivity extends AppCompatActivity {
                 txn = new CasinoTxn(node, secrets, myPubkey, myHexAddr);
                 auto = new AutoProcessor(txn);
                 if (identityReady) log("Connected · " + Util.shorten(myHexAddr), LOG_OK);
+                cleanCasinoTracking();
                 reload();
             }
             @Override public void onError(String message) { handleErr(message); }
+        });
+    }
+
+    /**
+     * Wallet-balance hygiene sweep (once per session, after keys load): drop relevance from casino
+     * bet coins this wallet is NOT a party to. Old builds registered the shared casino script with
+     * {@code trackall:true}, so one play made the node adopt EVERY bet on the network into its
+     * confirmed balance forever. {@link CasinoContract#register} (now {@code trackall:false};
+     * {@code newscript} REPLACES the row) demotes the script each launch; this sweep clears the
+     * already-relevant stranger coins with one address-scoped {@code coins relevant:true} query
+     * (deliberately depth-unbounded: old pollution concentrates in the tree root). Coins carrying
+     * this wallet's keys/addresses in state ports 0/1/8/9 are spared: those are YOUR live bets.
+     * WARNING — the spare-filter is the ONLY protection: {@code cointrack enable:false} on an
+     * EXISTING coin is permanent (core re-checks relevance only when a block first processes a
+     * coin), and a wrongly-untracked live own bet would drop from the tree at cascade, making its
+     * timeout claim impossible. So the sweep ABORTS (and retries next launch) whenever {@code keys}
+     * or the {@code scripts} table can't be read — never proceed on partial ownership knowledge.
+     * Re-runs each launch because core's in-memory relevance cache only clears on node restart.
+     * Per-coin failures ({@code {"status":false}} via the SUCCESS callback) are skipped, never fatal.
+     */
+    private void cleanCasinoTracking() {
+        if (cleanedTracking || node == null || myKeys.isEmpty()) return;
+        cleanedTracking = true;
+        final Set<String> mine = new HashSet<>();
+        for (String k : myKeys) mine.add(k.toLowerCase());
+        if (!myHexAddr.isEmpty()) mine.add(myHexAddr.toLowerCase());
+        // ports 1/9 may carry ANY of the wallet's addresses (getaddress cycles the 64 defaults across
+        // sessions) — collect them all from the scripts table's simple rows before filtering coins.
+        node.cmd("scripts", new NodeApi.Cb() {
+            @Override public void onResult(JSONObject j) {
+                if (!CasinoHygiene.truthy(j, "status") || j.optJSONArray("response") == null) {
+                    cleanedTracking = false;   // ports 1/9 net unavailable → abort, retry next launch
+                    return;
+                }
+                CasinoHygiene.collectWalletAddressesLower(j.optJSONArray("response"), mine);
+                untrackForeignBets(mine);
+            }
+            @Override public void onError(String m) { cleanedTracking = false; }   // abort — never sweep on partial ownership knowledge
+        });
+    }
+
+    private void untrackForeignBets(final Set<String> mineLower) {
+        node.cmd("coins relevant:true address:" + CasinoContract.SCRIPT_ADDR, new NodeApi.Cb() {
+            @Override public void onResult(JSONObject j) {
+                untrackNextCoin(CasinoHygiene.coinsToUntrack(j.optJSONArray("response"), mineLower), 0);
+            }
+            @Override public void onError(String m) {}
+        });
+    }
+
+    private void untrackNextCoin(final List<String> coinids, final int i) {
+        if (i >= coinids.size()) return;
+        // {"status":false} (already spent / denied) arrives via the SUCCESS callback — keep going
+        node.cmd("cointrack enable:false coinid:" + coinids.get(i), new NodeApi.Cb() {
+            @Override public void onResult(JSONObject j) { untrackNextCoin(coinids, i + 1); }
+            @Override public void onError(String m) { untrackNextCoin(coinids, i + 1); }
         });
     }
 
@@ -253,8 +311,12 @@ public class MainActivity extends AppCompatActivity {
     /** Pull the casino coins and run the reconcile / auto-process / celebrate pass (block tip known). */
     private void fetchBetsAndProcess() {
         // All casino coins at the contract address. Refreshed only on new block (memory: heavy
-        // IPC responses can crash the node — never poll this in a tight loop).
-        node.cmd("coins address:" + CasinoContract.SCRIPT_ADDR, new NodeApi.Cb() {
+        // IPC responses can crash the node — never poll this in a tight loop). depth:4096 is a
+        // pathological-growth cap ONLY: it sits above every tree length (family fork cascades at
+        // 1024, STOCK Minima at 2048, oscillating ~2148), so the walk always reaches the root and
+        // old claimable coins carried there stay visible. NEVER lower below the stock cascade — a
+        // sub-2048 cap silently hides >cap-old timeout claims on stock nodes (stranded pots).
+        node.cmd("coins address:" + CasinoContract.SCRIPT_ADDR + " depth:4096", new NodeApi.Cb() {
             @Override public void onResult(JSONObject json) {
                 setPaired(true);
                 bets.clear();

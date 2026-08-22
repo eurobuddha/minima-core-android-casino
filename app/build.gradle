@@ -10,8 +10,8 @@ android {
         applicationId "com.eurobuddha.casino"
         minSdk 28
         targetSdk 35
-        versionCode 607
-        versionName "0.6.7"
+        versionCode 608
+        versionName "0.6.8"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -62,4 +62,9 @@ dependencies {
     implementation 'androidx.security:security-crypto:1.1.0-alpha06'
 
     implementation files('libs/minimaapi.aar')
+
+    // Local JVM unit tests for the tracking-hygiene decision logic (CasinoHygiene)
+    testImplementation 'junit:junit:4.13.2'
+    // Real org.json on the unit-test classpath (android.jar ships stubs that throw "not mocked")
+    testImplementation 'org.json:json:20231013'
 }

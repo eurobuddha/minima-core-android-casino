@@ -73,9 +73,18 @@ public final class CasinoContract {
         }
     }
 
-    /** Register the script so the node tracks the casino address. Fire-and-forget at startup. */
+    /**
+     * Register the script so {@code txnbasics} can attach the covenant's ScriptProof when spending
+     * bet coins (the script-table row is all it reads — it is track-flag-blind). Registered with
+     * {@code trackall:false}: {@code trackall:true} made every player's node adopt EVERY bet on the
+     * network into its confirmed balance forever (one shared address for all players). Your OWN bets
+     * stay relevant without tracking — core matches the wallet's keys/addresses against the coin's
+     * HEX state (ports 0/1/8/9 carry house/player pk+addr). Discovery is unaffected: all surfaces
+     * enumerate bets via {@code coins address:}, which walks the chain tree relevance-free.
+     * Fire-and-forget at startup; {@link CasinoHygiene} heals nodes the old builds polluted.
+     */
     public static void register(NodeApi node) {
-        node.cmd("newscript script:\"" + SCRIPT + "\" trackall:true", new NodeApi.Cb() {
+        node.cmd("newscript script:\"" + SCRIPT + "\" trackall:false", new NodeApi.Cb() {
             @Override public void onResult(JSONObject json) {}
             @Override public void onError(String message) {}
         });

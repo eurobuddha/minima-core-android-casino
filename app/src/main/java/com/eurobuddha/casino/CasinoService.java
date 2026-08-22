@@ -137,7 +137,8 @@ public class CasinoService extends Service {
     }
 
     private void fetchAndProcess() {
-        node.cmd("coins address:" + CasinoContract.SCRIPT_ADDR, new NodeApi.Cb() {
+        // depth:4096 = pathological-growth cap above every tree length (stock cascade 2048) — see MainActivity note.
+        node.cmd("coins address:" + CasinoContract.SCRIPT_ADDR + " depth:4096", new NodeApi.Cb() {
             @Override public void onResult(JSONObject json) {
                 List<Bet> bets = new ArrayList<>();
                 JSONArray arr = json.optJSONArray("response");
