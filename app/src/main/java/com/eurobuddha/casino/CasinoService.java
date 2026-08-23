@@ -47,6 +47,11 @@ public class CasinoService extends Service {
     private String myPubkey = "", myHexAddr = "";
     private final Set<String> myKeys = new HashSet<>();
     private boolean ready = false;
+    // Hygiene sweep state — mirrors MainActivity.sweepForeignTracking (see the doc there). The
+    // service sweeps too so a polluted node heals even when only the background brain is running;
+    // tick() stands down while the Activity is foreground, so the two never sweep concurrently.
+    private Set<String> hygieneMine = null;
+    private boolean sweepBusy = false;
 
     @Override public IBinder onBind(Intent intent) { return null; }
 
@@ -149,8 +154,48 @@ public class CasinoService extends Service {
                     if (b.isValid()) bets.add(b);
                 }
                 auto.process(bets, new HashSet<>(myKeys), lastBlock, listener);
+                sweepForeignTracking();   // shed any foreign coins the node adopted since last block
             }
             @Override public void onError(String m) {}
+        });
+    }
+
+    // ----- hygiene sweep (same contract as MainActivity.sweepForeignTracking: ownership set from
+    // `scripts` resolved once, per-block untrack of casino coins we are NOT a party to, abort on
+    // partial ownership knowledge — the ports 0/1/8/9 spare-filter is the only own-bet protection) -----
+    private void sweepForeignTracking() {
+        if (node == null || myKeys.isEmpty()) return;
+        if (hygieneMine != null) { untrackForeignBets(hygieneMine); return; }
+        final Set<String> mine = new HashSet<>();
+        for (String k : myKeys) mine.add(k.toLowerCase());
+        if (!myHexAddr.isEmpty()) mine.add(myHexAddr.toLowerCase());
+        node.cmd("scripts", new NodeApi.Cb() {
+            @Override public void onResult(JSONObject j) {
+                if (!CasinoHygiene.truthy(j, "status") || j.optJSONArray("response") == null) return;
+                CasinoHygiene.collectWalletAddressesLower(j.optJSONArray("response"), mine);
+                hygieneMine = mine;
+                untrackForeignBets(mine);
+            }
+            @Override public void onError(String m) {}
+        });
+    }
+
+    private void untrackForeignBets(final Set<String> mineLower) {
+        if (sweepBusy) return;
+        sweepBusy = true;
+        node.cmd("coins relevant:true address:" + CasinoContract.SCRIPT_ADDR, new NodeApi.Cb() {
+            @Override public void onResult(JSONObject j) {
+                untrackNextCoin(CasinoHygiene.coinsToUntrack(j.optJSONArray("response"), mineLower), 0);
+            }
+            @Override public void onError(String m) { sweepBusy = false; }
+        });
+    }
+
+    private void untrackNextCoin(final java.util.List<String> coinids, final int i) {
+        if (i >= coinids.size()) { sweepBusy = false; return; }
+        node.cmd("cointrack enable:false coinid:" + coinids.get(i), new NodeApi.Cb() {
+            @Override public void onResult(JSONObject j) { untrackNextCoin(coinids, i + 1); }
+            @Override public void onError(String m) { untrackNextCoin(coinids, i + 1); }
         });
     }
 

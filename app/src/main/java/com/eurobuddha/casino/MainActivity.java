@@ -77,7 +77,10 @@ public class MainActivity extends AppCompatActivity {
     private String myPubkey = "", myHexAddr = "";
     private final Set<String> myKeys = new HashSet<>();
     private boolean identityReady = false;
-    private boolean cleanedTracking = false;   // balance hygiene sweep runs once per session
+    // Ownership set for the hygiene sweep (wallet keys + simple addresses, lowercased). Resolved
+    // once per session from `scripts`; null until that read succeeds (sweep aborts meanwhile).
+    private Set<String> hygieneMine = null;
+    private boolean sweepBusy = false;         // one sweep chain at a time; reloads never stack them
 
     // chain / bet state
     private int chainBlock = 0;
@@ -211,8 +214,8 @@ public class MainActivity extends AppCompatActivity {
                 identityReady = !myPubkey.isEmpty() && !myHexAddr.isEmpty();
                 txn = new CasinoTxn(node, secrets, myPubkey, myHexAddr);
                 auto = new AutoProcessor(txn);
-                if (identityReady) log("Connected · " + Util.shorten(myHexAddr), LOG_OK);
-                cleanCasinoTracking();
+                if (identityReady) log("Connected · " + myHexAddr, LOG_OK);
+                sweepForeignTracking();
                 reload();
             }
             @Override public void onError(String message) { handleErr(message); }
@@ -220,25 +223,28 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Wallet-balance hygiene sweep (once per session, after keys load): drop relevance from casino
-     * bet coins this wallet is NOT a party to. Old builds registered the shared casino script with
-     * {@code trackall:true}, so one play made the node adopt EVERY bet on the network into its
-     * confirmed balance forever. {@link CasinoContract#register} (now {@code trackall:false};
-     * {@code newscript} REPLACES the row) demotes the script each launch; this sweep clears the
-     * already-relevant stranger coins with one address-scoped {@code coins relevant:true} query
-     * (deliberately depth-unbounded: old pollution concentrates in the tree root). Coins carrying
-     * this wallet's keys/addresses in state ports 0/1/8/9 are spared: those are YOUR live bets.
+     * Wallet-balance hygiene sweep — CONTINUOUS: drop relevance from casino bet coins this wallet
+     * is NOT a party to, on EVERY reload pass (NEWBLOCK-driven, 400ms-coalesced), not just once at
+     * launch. Old builds registered the shared casino script with {@code trackall:true}, so one
+     * play made the node adopt EVERY bet on the network into its confirmed balance forever — and
+     * core keeps a demoted address in its in-memory relevance cache ({@code mAllTrackedAddress})
+     * until node restart, so on a polluted node fresh foreign bets keep being adopted EVERY block.
+     * A once-per-launch sweep therefore missed everything adopted mid-session; this per-block
+     * sweep sheds each foreign coin within a block of adoption. {@link CasinoContract#register}
+     * (now {@code trackall:false}; {@code newscript} REPLACES the row) still demotes the script
+     * each launch so a node restart ends the adoption entirely.
+     * The ownership set (wallet keys + ALL simple wallet addresses, for state ports 0/1/8/9) is
+     * resolved ONCE per session from {@code scripts}; until that read succeeds the sweep does
+     * nothing — never proceed on partial ownership knowledge.
      * WARNING — the spare-filter is the ONLY protection: {@code cointrack enable:false} on an
      * EXISTING coin is permanent (core re-checks relevance only when a block first processes a
      * coin), and a wrongly-untracked live own bet would drop from the tree at cascade, making its
-     * timeout claim impossible. So the sweep ABORTS (and retries next launch) whenever {@code keys}
-     * or the {@code scripts} table can't be read — never proceed on partial ownership knowledge.
-     * Re-runs each launch because core's in-memory relevance cache only clears on node restart.
+     * timeout claim impossible.
      * Per-coin failures ({@code {"status":false}} via the SUCCESS callback) are skipped, never fatal.
      */
-    private void cleanCasinoTracking() {
-        if (cleanedTracking || node == null || myKeys.isEmpty()) return;
-        cleanedTracking = true;
+    private void sweepForeignTracking() {
+        if (node == null || myKeys.isEmpty()) return;
+        if (hygieneMine != null) { untrackForeignBets(hygieneMine); return; }
         final Set<String> mine = new HashSet<>();
         for (String k : myKeys) mine.add(k.toLowerCase());
         if (!myHexAddr.isEmpty()) mine.add(myHexAddr.toLowerCase());
@@ -247,27 +253,30 @@ public class MainActivity extends AppCompatActivity {
         node.cmd("scripts", new NodeApi.Cb() {
             @Override public void onResult(JSONObject j) {
                 if (!CasinoHygiene.truthy(j, "status") || j.optJSONArray("response") == null) {
-                    cleanedTracking = false;   // ports 1/9 net unavailable → abort, retry next launch
-                    return;
+                    return;   // ports 1/9 net unavailable → abort, retry next reload
                 }
                 CasinoHygiene.collectWalletAddressesLower(j.optJSONArray("response"), mine);
+                hygieneMine = mine;
                 untrackForeignBets(mine);
             }
-            @Override public void onError(String m) { cleanedTracking = false; }   // abort — never sweep on partial ownership knowledge
+            @Override public void onError(String m) {}   // abort — never sweep on partial ownership knowledge
         });
     }
 
     private void untrackForeignBets(final Set<String> mineLower) {
+        if (sweepBusy) return;   // previous chain still untracking — this pass's coins are caught next reload
+        sweepBusy = true;
+        // Deliberately depth-unbounded: old pollution concentrates in the tree root.
         node.cmd("coins relevant:true address:" + CasinoContract.SCRIPT_ADDR, new NodeApi.Cb() {
             @Override public void onResult(JSONObject j) {
                 untrackNextCoin(CasinoHygiene.coinsToUntrack(j.optJSONArray("response"), mineLower), 0);
             }
-            @Override public void onError(String m) {}
+            @Override public void onError(String m) { sweepBusy = false; }
         });
     }
 
     private void untrackNextCoin(final List<String> coinids, final int i) {
-        if (i >= coinids.size()) return;
+        if (i >= coinids.size()) { sweepBusy = false; return; }
         // {"status":false} (already spent / denied) arrives via the SUCCESS callback — keep going
         node.cmd("cointrack enable:false coinid:" + coinids.get(i), new NodeApi.Cb() {
             @Override public void onResult(JSONObject j) { untrackNextCoin(coinids, i + 1); }
@@ -337,6 +346,7 @@ public class MainActivity extends AppCompatActivity {
                     auto.process(new ArrayList<>(bets), new HashSet<>(myKeys), chainBlock, autoListener);
                 }
                 celebratePending();   // show the modal for any recorded result whose coin has now left chain
+                sweepForeignTracking();   // shed any foreign coins the node adopted since last block
                 maybeStartService();
             }
             @Override public void onError(String message) { handleErr(message); }
