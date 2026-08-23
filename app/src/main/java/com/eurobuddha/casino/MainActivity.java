@@ -387,18 +387,18 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Show the animated win/lose modal for the newest result whose bet has actually LEFT the chain
-     * (its coin is gone), so the celebration coincides with the card disappearing from MY BETS —
-     * never while the bet still looks live. Results whose coin is still on-chain are left for a
-     * later reload.
+     * Show the animated win/lose modal for the newest result the instant it is recorded — the same
+     * moment it appears in HISTORY. This is a commit-reveal game: the outcome is computed locally the
+     * moment we can resolve, well before the payout coin mines out of the contract, so we celebrate
+     * on "result known" rather than waiting the extra blocks for the coin to leave chain (which made
+     * the modal lag HISTORY by minutes). The still-confirming bet renders as "Settled" in MY BETS
+     * (see MyBetsView), so nothing looks live while the celebration plays. The {@code celebrated}
+     * flag de-dupes so each result is shown exactly once.
      */
     public void celebratePending() {
-        Set<String> live = new HashSet<>();
-        for (Bet b : bets) live.add(b.coinid());
         ResolvedBet target = null;
         for (ResolvedBet r : history) {
             if (r.celebrated) continue;
-            if (r.coinid != null && live.contains(r.coinid)) continue;   // bet still live — wait
             if (target == null) target = r;
             r.celebrated = true;
         }
@@ -432,6 +432,13 @@ public class MainActivity extends AppCompatActivity {
     private boolean hasHistory(String coinid) {
         for (ResolvedBet r : history) if (coinid.equals(r.coinid)) return true;
         return false;
+    }
+
+    /** The recorded result for this coin, or null if none — lets MY BETS render a settled state
+     *  while the payout is still confirming (the coin is still live but the outcome is decided). */
+    public ResolvedBet resultFor(String coinid) {
+        for (ResolvedBet r : history) if (coinid.equals(r.coinid)) return r;
+        return null;
     }
 
     // ===== result reconciliation (the counterparty resolved the bet) =====

@@ -192,7 +192,14 @@ public class MyBetsView extends BaseView {
             actions.addView(cancel);
             any = true;
         }
-        if (b.phase == 2 && b.iAmPlayer(act.myKeys())) {
+        // Already resolved locally (result recorded + modal shown) but the payout coin hasn't mined
+        // out yet: the outcome is decided, so show a settled status instead of a live Resolve button
+        // — keeps MY BETS in step with HISTORY and the celebration while confirmation completes.
+        ResolvedBet settled = b.phase == 2 && b.iAmPlayer(act.myKeys()) ? act.resultFor(b.coinid()) : null;
+        if (settled != null) {
+            status.setTextColor(settled.won ? Theme.green() : Theme.red());
+            status.setText((settled.won ? "WON +" : "LOST -") + settled.profit + " · payout confirming…");
+        } else if (b.phase == 2 && b.iAmPlayer(act.myKeys())) {
             boolean inFlight = act.auto() != null && act.auto().inFlight(b.coinid(), act.chainBlock());
             Button resolve = Ui.button(act, inFlight ? "Resolving…" : "Resolve", Theme.gold(), Theme.onAccent());
             resolve.setOnClickListener(v -> {
