@@ -77,6 +77,7 @@ public class MainActivity extends AppCompatActivity {
     private String myPubkey = "", myHexAddr = "";
     private final Set<String> myKeys = new HashSet<>();
     private boolean identityReady = false;
+    private boolean identityLoading = false;   // a getaddress attempt is in flight (re-entrancy guard)
     // Ownership set for the hygiene sweep (wallet keys + simple addresses, lowercased). Resolved
     // once per session from `scripts`; null until that read succeeds (sweep aborts meanwhile).
     private Set<String> hygieneMine = null;
@@ -178,21 +179,54 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ===== identity =====
+    /**
+     * Establish this wallet's identity (public key + address) from the node.
+     *
+     * SELF-HEALING: identity is derived from {@code getaddress} ALONE — the only thing
+     * {@link #identityReady} needs — so a slow or failed {@code keys} reply can never block it.
+     * {@link #requestReload()} re-invokes this every block while identity is not yet ready, so a
+     * transient failure at launch (node still coming up right after a re-pair, enable grant not
+     * landed yet, one-off timeout) recovers on the next block instead of freezing the app on
+     * "Starting up…" for the whole Activity lifetime. The {@link #identityLoading} guard keeps at
+     * most one attempt in flight; once ready, the guard makes further calls no-ops. {@code keys} is
+     * then fetched best-effort purely to seed the hygiene ownership set — its failure is harmless.
+     */
     private void loadIdentity() {
+        if (identityReady || identityLoading) return;
+        identityLoading = true;
         node.cmd("getaddress", new NodeApi.Cb() {
             @Override public void onResult(JSONObject json) {
+                identityLoading = false;
                 setPaired(true);
                 JSONObject r = json.optJSONObject("response");
                 if (r != null) {
                     myPubkey = r.optString("publickey", "");
                     myHexAddr = r.optString("address", "");
                 }
-                loadKeys();
+                if (!myPubkey.isEmpty() && !myHexAddr.isEmpty()) {
+                    if (!identityReady) {
+                        identityReady = true;
+                        txn = new CasinoTxn(node, secrets, myPubkey, myHexAddr);
+                        auto = new AutoProcessor(txn);
+                        log("Connected · " + myHexAddr, LOG_OK);
+                    }
+                    loadKeys();             // best-effort: seeds the hygiene ownership set only
+                } else {
+                    // getaddress answered but without a usable identity (node not fully ready).
+                    log("Node not ready — retrying…", LOG_WARN);
+                }
+                reload();
             }
-            @Override public void onError(String message) { handleErr(message); }
+            @Override public void onError(String message) {
+                identityLoading = false;
+                handleErr(message);
+                if (!identityReady && !NodeApi.ERR_NOT_ENABLED.equals(message))
+                    log("Node not ready — retrying next block…", LOG_WARN);
+            }
         });
     }
 
+    /** Best-effort: populate the wallet key set for the hygiene sweep. Never gates identity. */
     private void loadKeys() {
         node.cmd("keys", new NodeApi.Cb() {
             @Override public void onResult(JSONObject json) {
@@ -211,14 +245,9 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
                 if (!myPubkey.isEmpty()) myKeys.add(myPubkey);
-                identityReady = !myPubkey.isEmpty() && !myHexAddr.isEmpty();
-                txn = new CasinoTxn(node, secrets, myPubkey, myHexAddr);
-                auto = new AutoProcessor(txn);
-                if (identityReady) log("Connected · " + myHexAddr, LOG_OK);
                 sweepForeignTracking();
-                reload();
             }
-            @Override public void onError(String message) { handleErr(message); }
+            @Override public void onError(String message) { /* best-effort; identity already set */ }
         });
     }
 
@@ -645,6 +674,9 @@ public class MainActivity extends AppCompatActivity {
 
     /** Coalesce bursts of NEWBLOCK/NEWBALANCE into a single reload. */
     public void requestReload() {
+        // Self-heal identity: every block/resume/post-txn tick, retry the one-shot startup load
+        // until it lands. No-op once ready (guarded inside loadIdentity), so it never re-fires.
+        if (!identityReady) loadIdentity();
         ui.removeCallbacks(reloadTask);
         ui.postDelayed(reloadTask, 400);
     }
