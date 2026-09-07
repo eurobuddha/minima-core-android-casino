@@ -12,6 +12,12 @@ import java.util.Locale;
 /** HISTORY tab — resolved bets with P&L. */
 public class HistoryView extends BaseView {
 
+    /** How many rows to actually draw. The container is a plain ScrollView with no view recycling,
+     *  so drawing all {@link SecretStore#HISTORY_CAP} rows would inflate thousands of views per
+     *  refresh and jank on older phones. The Net line above still sums the FULL stored history —
+     *  only the drawn rows are capped; a footer notes how many older bets are counted but not shown. */
+    private static final int RENDER_LIMIT = 250;
+
     private final LinearLayout container;
     private final SimpleDateFormat fmt = new SimpleDateFormat("dd MMM HH:mm", Locale.getDefault());
 
@@ -31,7 +37,9 @@ public class HistoryView extends BaseView {
         // profit figures each row below shows). Won profits add, lost profits subtract.
         LinearLayout subRow = Ui.row(act);
         subRow.setPadding(0, Ui.dp(act, 2), 0, Ui.dp(act, 12));
-        subRow.addView(Ui.text(act, "Your last " + SecretStore.HISTORY_CAP + " resolved bets.", Theme.dim(), 11, false), Ui.lpRow(act, 1));
+        int n = act.history().size();
+        String caption = "Your " + n + " resolved bet" + (n == 1 ? "" : "s") + ".";
+        subRow.addView(Ui.text(act, caption, Theme.dim(), 11, false), Ui.lpRow(act, 1));
         if (!act.history().isEmpty()) {
             BigDecimal net = BigDecimal.ZERO;
             for (ResolvedBet r : act.history()) {
@@ -52,7 +60,17 @@ public class HistoryView extends BaseView {
             container.addView(empty);
             return;
         }
-        for (ResolvedBet r : act.history()) container.addView(row(r));
+        java.util.List<ResolvedBet> all = act.history();
+        int shown = Math.min(all.size(), RENDER_LIMIT);
+        for (int i = 0; i < shown; i++) container.addView(row(all.get(i)));
+        if (all.size() > shown) {
+            TextView more = Ui.text(act,
+                    "+ " + (all.size() - shown) + " older bets — counted in Net above, not shown here.",
+                    Theme.dim(), 10, false);
+            more.setGravity(Gravity.CENTER);
+            more.setPadding(0, Ui.dp(act, 8), 0, Ui.dp(act, 4));
+            container.addView(more);
+        }
     }
 
     private LinearLayout row(ResolvedBet r) {
