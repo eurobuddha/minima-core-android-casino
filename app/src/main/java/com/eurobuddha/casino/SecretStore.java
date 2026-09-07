@@ -11,7 +11,7 @@ import androidx.security.crypto.MasterKey;
  * for the dapp's MDS.keypair. Keys:
  *   casino_secret_for_<commit>   house secret (so we can auto-reveal)
  *   casino_psecret_for_<commit>  player secret (so we can auto-resolve)
- *   casino_history               JSON array of resolved bets (capped 50)
+ *   casino_history               JSON array of resolved bets (capped {@link #HISTORY_CAP})
  *
  * Secrets gate real funds, so they live in EncryptedSharedPreferences (AES via the Android
  * Keystore-backed master key). Falls back to plain prefs only if the keystore is unavailable.
@@ -19,6 +19,10 @@ import androidx.security.crypto.MasterKey;
 public class SecretStore {
 
     private static final String FILE = "casino_secrets";
+
+    /** Max resolved bets retained in {@code casino_history} (newest first; older ones drop off). */
+    public static final int HISTORY_CAP = 1000;
+
     private final SharedPreferences prefs;
 
     public SecretStore(Context ctx) {

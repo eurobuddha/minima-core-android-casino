@@ -239,7 +239,7 @@ public class CasinoService extends Service {
             }
             JSONArray out = new JSONArray();
             out.put(rb.toJson());
-            for (int i = 0; i < arr.length() && out.length() < 50; i++) out.put(arr.get(i));
+            for (int i = 0; i < arr.length() && out.length() < SecretStore.HISTORY_CAP; i++) out.put(arr.get(i));
             secrets.putHistory(out.toString());
         } catch (Exception ignored) {}
     }

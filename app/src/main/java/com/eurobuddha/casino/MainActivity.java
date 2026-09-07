@@ -419,7 +419,7 @@ public class MainActivity extends AppCompatActivity {
         rb.time = System.currentTimeMillis();
         rb.celebrated = false;
         history.add(0, rb);
-        while (history.size() > 50) history.remove(history.size() - 1);
+        while (history.size() > SecretStore.HISTORY_CAP) history.remove(history.size() - 1);
         saveHistory();
         views[TAB_HISTORY].refresh();
         celebratePending();
