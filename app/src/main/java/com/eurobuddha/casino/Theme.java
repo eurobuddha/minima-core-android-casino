@@ -13,9 +13,11 @@ public final class Theme {
     private static final String PREFS = "casino_theme";
     private static final String KEY_LIGHT = "light";
     private static final String KEY_SOUND = "sound";
+    private static final String KEY_DOLLAR = "dollar";
 
     private static boolean light = false;   // dapp default is dark
     private static boolean sound = true;
+    private static boolean dollar = false;  // false = native Minima; true = MxUSD ("USD") mode
 
     private Theme() {}
 
@@ -23,6 +25,7 @@ public final class Theme {
         var p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         light = p.getBoolean(KEY_LIGHT, false);
         sound = p.getBoolean(KEY_SOUND, true);
+        dollar = p.getBoolean(KEY_DOLLAR, false);
     }
 
     public static boolean isLight() { return light; }
@@ -39,6 +42,13 @@ public final class Theme {
         c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_SOUND, v).apply();
     }
 
+    public static boolean dollar() { return dollar; }
+
+    public static void setDollar(Context c, boolean v) {
+        dollar = v;
+        c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_DOLLAR, v).apply();
+    }
+
     private static int pick(int dark, int lightCol) { return light ? lightCol : dark; }
 
     // ---- palette (verbatim from the dapp CSS variables) ----
@@ -46,7 +56,10 @@ public final class Theme {
     public static int panel()     { return pick(0xFF121829, 0xFFFFFFFF); } // card surface
     public static int panel2()    { return pick(0xFF1A2238, 0xFFE9E9F0); } // raised surface
     public static int border()    { return pick(0xFF2A3550, 0xFFC9C9D6); }
-    public static int gold()      { return 0xFFFFD700; } // --gold
+    // The primary accent. Dollar (MxUSD) mode swaps the gold accent for dollar-green so the whole
+    // app reads "dollars"; Minima mode keeps the original gold, byte-for-byte. Every view funnels
+    // its accent through gold(), so this one line recolours all four tabs + overlays centrally.
+    public static int gold()      { return dollar ? Currency.ACCENT_GREEN : 0xFFFFD700; }
     public static int pink()      { return 0xFFFF2D78; } // --pink
     public static int cyan()      { return 0xFF00E5FF; } // --cyan
     public static int green()     { return 0xFF35E07A; } // win green

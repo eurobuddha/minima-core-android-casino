@@ -41,6 +41,9 @@ public class Bet {
     }
 
     public String coinid() { return coin.coinid; }
+    /** The token this bet's pot is held in (0x00 for native Minima). Every settlement output
+     *  must carry this exact token — the covenant pins each output to the spent coin's @TOKENID. */
+    public String tokenid() { return coin.tokenid; }
     public Game game() { return Game.byRange(range); }
     public String gameName() { return game().name; }
     public String pickLabel() { return game().pickLabel(pick); }

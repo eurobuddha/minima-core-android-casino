@@ -61,7 +61,10 @@ public class CasinoTxn {
                                 + "\",\"2\":\"" + commit + "\",\"3\":\"" + game.range
                                 + "\",\"4\":\"" + game.payout + "\",\"5\":\"" + betStr
                                 + "\",\"6\":\"0\",\"7\":\"" + TIMEOUT_BLOCKS + "\"}";
+                        // A newly created bet is minted in the currently-active currency. Every
+                        // later output is pinned to THIS coin's token by the covenant (@TOKENID).
                         node.cmd("send amount:" + stakeStr + " address:" + SCRIPT_ADDR
+                                + " tokenid:" + Currency.tokenId()
                                 + " state:" + state, new NodeApi.Cb() {
                             @Override public void onResult(JSONObject s) {
                                 if (s.optBoolean("status", false)) cb.onPosted(Util.extractTxpowid(s, ""));
@@ -92,12 +95,15 @@ public class CasinoTxn {
                         // FUND-SAFETY: the player secret must be durable BEFORE we commit the take — a lost preimage
                         // means we can never resolve and the house timeout-claims the pot. Abort if it didn't persist.
                         if (!secrets.putPlayerSecret(commit, secret)) { cb.onFailed("Could not save the bet secret — aborting to protect your funds"); return; }
-                        findCoins(betAmt, bet.coinid(), new CoinsCb() {
+                        // Fund the take in the SAME token the house locked (the bet coin's token),
+                        // not the global toggle — you always stake in the pot's currency.
+                        findCoins(betAmt, bet.tokenid(), bet.coinid(), new CoinsCb() {
                             @Override public void onCoins(List<Coin> funds, BigDecimal sum) {
                                 buildTake(bet, pick, commit, betAmt, total, funds, sum, cb);
                             }
                             @Override public void onNone() {
-                                cb.onFailed("Insufficient Minima (need " + Util.miniNum(betAmt) + ")");
+                                cb.onFailed("Insufficient " + Currency.nameFor(bet.tokenid())
+                                        + " (need " + Util.miniNum(betAmt) + ")");
                             }
                         });
                     }
@@ -116,12 +122,13 @@ public class CasinoTxn {
         cmds.add("txncreate id:" + txid);
         cmds.add("txninput id:" + txid + " coinid:" + bet.coinid());
         for (Coin f : funds) cmds.add("txninput id:" + txid + " coinid:" + f.coinid);
+        String tok = bet.tokenid();
         cmds.add("txnoutput id:" + txid + " amount:" + Util.miniNum(total)
-                + " address:" + SCRIPT_ADDR + " storestate:true");
+                + " address:" + SCRIPT_ADDR + " tokenid:" + tok + " storestate:true");
         BigDecimal change = sum.subtract(betAmt);
         if (change.compareTo(DUST) > 0) {
             cmds.add("txnoutput id:" + txid + " amount:" + Util.miniNum(change)
-                    + " address:" + myHexAddr + " storestate:false");
+                    + " address:" + myHexAddr + " tokenid:" + tok + " storestate:false");
         }
         // states 0..11: house data copied, phase->1, player identity + pick
         addState(cmds, txid, P_HOUSE_PK, c.stateAt(P_HOUSE_PK));
@@ -160,7 +167,7 @@ public class CasinoTxn {
         cmds.add("txncreate id:" + txid);
         cmds.add("txninput id:" + txid + " coinid:" + bet.coinid());
         cmds.add("txnoutput id:" + txid + " amount:" + c.amount
-                + " address:" + SCRIPT_ADDR + " storestate:true");
+                + " address:" + SCRIPT_ADDR + " tokenid:" + bet.tokenid() + " storestate:true");
         for (int p = P_HOUSE_PK; p <= P_PICK; p++) {
             addState(cmds, txid, p, p == P_PHASE ? "2" : c.stateAt(p));
         }
@@ -201,17 +208,18 @@ public class CasinoTxn {
         List<String> cmds = new ArrayList<>();
         cmds.add("txncreate id:" + txid);
         cmds.add("txninput id:" + txid + " coinid:" + bet.coinid());
+        String tok = bet.tokenid();
         if (playerWins) {
             cmds.add("txnoutput id:" + txid + " amount:" + Util.miniNum(winnings)
-                    + " address:" + bet.playerAddr + " storestate:false");
+                    + " address:" + bet.playerAddr + " tokenid:" + tok + " storestate:false");
             BigDecimal remainder = total.subtract(winnings);
             if (remainder.compareTo(DUST) > 0) {
                 cmds.add("txnoutput id:" + txid + " amount:" + Util.miniNum(remainder)
-                        + " address:" + bet.houseAddr + " storestate:false");
+                        + " address:" + bet.houseAddr + " tokenid:" + tok + " storestate:false");
             }
         } else {
             cmds.add("txnoutput id:" + txid + " amount:" + Util.miniNum(total)
-                    + " address:" + bet.houseAddr + " storestate:false");
+                    + " address:" + bet.houseAddr + " tokenid:" + tok + " storestate:false");
         }
         addState(cmds, txid, P_PLAYER_SECRET, playerSecret);
         cmds.add("txnsign id:" + txid + " publickey:" + bet.playerPk);
@@ -231,7 +239,7 @@ public class CasinoTxn {
         cmds.add("txncreate id:" + txid);
         cmds.add("txninput id:" + txid + " coinid:" + bet.coinid());
         cmds.add("txnoutput id:" + txid + " amount:" + bet.coin.amount
-                + " address:" + myHexAddr + " storestate:false");
+                + " address:" + myHexAddr + " tokenid:" + bet.tokenid() + " storestate:false");
         cmds.add("txnsign id:" + txid + " publickey:" + bet.housePk);
         cmds.add("txnbasics id:" + txid);
         cmds.add("txnpost id:" + txid);
@@ -246,7 +254,7 @@ public class CasinoTxn {
         cmds.add("txncreate id:" + txid);
         cmds.add("txninput id:" + txid + " coinid:" + bet.coinid());
         cmds.add("txnoutput id:" + txid + " amount:" + bet.coin.amount
-                + " address:" + myHexAddr + " storestate:false");
+                + " address:" + myHexAddr + " tokenid:" + bet.tokenid() + " storestate:false");
         cmds.add("txnsign id:" + txid + " publickey:" + signKey);
         cmds.add("txnbasics id:" + txid);
         cmds.add("txnpost id:" + txid);
@@ -297,8 +305,8 @@ public class CasinoTxn {
     // ---- coin selection (port of the dapp's findCoins) ----
     private interface CoinsCb { void onCoins(List<Coin> coins, BigDecimal sum); void onNone(); }
 
-    private void findCoins(BigDecimal need, String excludeCoinid, CoinsCb cb) {
-        node.cmd("coins relevant:true sendable:true tokenid:0x00", new NodeApi.Cb() {
+    private void findCoins(BigDecimal need, String tokenid, String excludeCoinid, CoinsCb cb) {
+        node.cmd("coins relevant:true sendable:true tokenid:" + tokenid, new NodeApi.Cb() {
             @Override public void onResult(JSONObject json) {
                 JSONArray arr = json.optJSONArray("response");
                 if (arr == null || arr.length() == 0) { cb.onNone(); return; }

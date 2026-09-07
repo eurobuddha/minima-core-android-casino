@@ -46,7 +46,7 @@ public class MyBetsView extends BaseView {
         container.addView(sub);
 
         int shown = 0;
-        for (Bet b : act.bets()) {
+        for (Bet b : act.visibleBets()) {
             if (!b.isMine(act.myKeys())) continue;
             container.addView(betCard(b));
             shown++;
@@ -61,7 +61,7 @@ public class MyBetsView extends BaseView {
 
     private String signature() {
         StringBuilder sb = new StringBuilder();
-        for (Bet b : act.bets()) {
+        for (Bet b : act.visibleBets()) {
             if (!b.isMine(act.myKeys())) continue;
             sb.append(b.coinid()).append(':').append(b.phase)
               .append(b.timedOut(act.chainBlock()) ? "T" : "").append('|');
@@ -90,9 +90,9 @@ public class MyBetsView extends BaseView {
                 : "Waiting for a player to pick…";
         card.addView(Ui.text(act, pickStr, Theme.text(), 15, true));
 
-        card.addView(Ui.text(act, "Stake " + Util.miniNum(Util.dec(b.betAmount))
-                + "  ·  pot " + Util.miniNum(Util.dec(b.totalAmount))
-                + "  ·  win " + Util.miniNum(Util.dec(b.betAmount).multiply(java.math.BigDecimal.valueOf(g.payout))),
+        card.addView(Ui.text(act, "Stake " + Currency.show(b.betAmount, b.tokenid())
+                + "  ·  pot " + Currency.show(b.totalAmount, b.tokenid())
+                + "  ·  win " + Currency.show(Util.miniNum(Util.dec(b.betAmount).multiply(java.math.BigDecimal.valueOf(g.payout))), b.tokenid()),
                 Theme.dim(), 12, false));
 
         // Big live game visual — spins continuously while the bet is in play.
@@ -172,7 +172,7 @@ public class MyBetsView extends BaseView {
 
     /** Tick the per-card timeout counters without rebuilding (keeps the spin smooth). */
     private void updateLiveCounters() {
-        for (Bet b : act.bets()) {
+        for (Bet b : act.visibleBets()) {
             if (!b.isMine(act.myKeys())) continue;
             TextView t = statusViews.get(b.coinid());
             if (t != null) applyStatus(t, b, b.iAmHouse(act.myKeys()));
@@ -239,10 +239,10 @@ public class MyBetsView extends BaseView {
                 boolean isHouse = b.iAmHouse(act.myKeys());
                 boolean iWon = (playerWins && !isHouse) || (!playerWins && isHouse);
                 BigDecimal profit = profit(b, iWon, isHouse);
-                act.log((iWon ? "WON +" : "LOST -") + Util.miniNum(profit) + " · " + b.gameName()
+                act.log((iWon ? "WON +" : "LOST -") + Currency.show(Util.miniNum(profit), b.tokenid()) + " · " + b.gameName()
                         + " (rolled " + b.game().pickLabel(result) + ")", iWon ? MainActivity.LOG_OK : MainActivity.LOG_ERR);
                 status.setTextColor(iWon ? Theme.green() : Theme.red());
-                status.setText((iWon ? "WON +" : "LOST -") + Util.miniNum(profit));
+                status.setText((iWon ? "WON +" : "LOST -") + Currency.show(Util.miniNum(profit), b.tokenid()));
                 act.recordResult(b, iWon, profit, result, isHouse);   // records + celebrates (modal/anim/sound)
                 act.requestReload();
             }

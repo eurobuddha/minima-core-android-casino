@@ -55,9 +55,10 @@ public class MainActivity extends AppCompatActivity {
 
     private BaseView[] views;
     private ViewPager pager;
-    private TextView balanceTv, blockTv, tickerTv;
+    private TextView balanceTv, blockTv, tickerTv, titleTv, subtitleTv;
     private View pairingBanner, liveDot;
-    private Button soundBtn;
+    private Button soundBtn, ccyBtn;
+    private TabLayout tabs;
     private BroadcastReceiver notifyReceiver;
 
     // ----- activity log -----
@@ -110,9 +111,12 @@ public class MainActivity extends AppCompatActivity {
         balanceTv = findViewById(R.id.balance);
         blockTv = findViewById(R.id.blockNo);
         tickerTv = findViewById(R.id.ticker);
+        titleTv = findViewById(R.id.title);
+        subtitleTv = findViewById(R.id.subtitle);
         liveDot = findViewById(R.id.liveDot);
         pairingBanner = findViewById(R.id.pairingBanner);
         soundBtn = findViewById(R.id.btnSound);
+        ccyBtn = findViewById(R.id.btnCcy);
         tickerTv.setOnClickListener(v -> showLogDialog());
 
         secrets = new SecretStore(this);
@@ -122,15 +126,13 @@ public class MainActivity extends AppCompatActivity {
         CasinoContract.register(node);
 
         // Tabs
-        views = new BaseView[]{ new PlayView(this), new HouseView(this), new MyBetsView(this), new HistoryView(this) };
         pager = findViewById(R.id.pager);
-        pager.setAdapter(new MainPager(views, new String[]{"PLAY", "HOUSE", "MY BETS", "HISTORY"}));
         pager.setOffscreenPageLimit(3);
-        TabLayout tabs = findViewById(R.id.tabs);
-        tabs.setupWithViewPager(pager);
+        tabs = findViewById(R.id.tabs);
         pager.addOnPageChangeListener(new ViewPager.SimpleOnPageChangeListener() {
-            @Override public void onPageSelected(int position) { views[position].onShown(); }
+            @Override public void onPageSelected(int position) { if (position < views.length) views[position].onShown(); }
         });
+        buildTabs();
 
         soundBtn.setOnClickListener(v -> {
             boolean on = !Theme.sound();
@@ -139,6 +141,20 @@ public class MainActivity extends AppCompatActivity {
             if (on) Sfx.chime();     // audible confirmation that sound is working
         });
         updateSoundBtn();
+
+        // Currency toggle: MINIMA <-> USD (MxUSD). Mirrors the sound button (click -> persist ->
+        // update label), but a currency change also re-tints the accent and rebuilds every view so
+        // the whole app switches token AND colour at once. The active currency's bets/balance are
+        // then re-queried; the two currencies never mix (discovery filters by tokenid).
+        ccyBtn.setOnClickListener(v -> {
+            Theme.setDollar(this, !Theme.dollar());
+            balance = "0"; balanceTv.setText("0");   // clear stale figure until the new token loads
+            bets.clear();
+            buildTabs();          // recreate every tab view so it picks up the new accent + labels
+            requestReload();      // re-query balance + bets for the new currency
+            if (Currency.isDollar()) log("Switched to USD (MxUSD) — keep a little Minima for network fees", LOG_OK);
+            else log("Switched to Minima", LOG_OK);
+        });
 
         // Live updates from the node.
         notifyReceiver = new BroadcastReceiver() {
@@ -315,12 +331,20 @@ public class MainActivity extends AppCompatActivity {
 
     // ===== loading =====
     public void reload() {
-        node.cmd("balance", new NodeApi.Cb() {
+        // Balance of the ACTIVE currency's token. `sendable` = tradeable (simple-address, unlocked)
+        // coins, excluding contract-locked pots — same field AtomiX uses. Shown at the token's true
+        // resolution in USD mode (no Minima 5-dp cap); suffixed with the currency.
+        final String tok = Currency.tokenId();
+        node.cmd("balance tokenid:" + tok, new NodeApi.Cb() {
             @Override public void onResult(JSONObject json) {
-                JSONArray arr = json.optJSONArray("response");
-                if (arr != null && arr.length() > 0) {
-                    JSONObject b0 = arr.optJSONObject(0);
-                    if (b0 != null) { balance = b0.optString("sendable", "0"); balanceTv.setText(Util.displayAmount(balance)); }
+                if (!tok.equals(Currency.tokenId())) return;   // currency switched mid-request; ignore
+                Object resp = json.opt("response");
+                JSONObject b0 = null;
+                if (resp instanceof JSONArray && ((JSONArray) resp).length() > 0) b0 = ((JSONArray) resp).optJSONObject(0);
+                else if (resp instanceof JSONObject) b0 = (JSONObject) resp;
+                if (b0 != null) {
+                    balance = b0.optString("sendable", "0");
+                    balanceTv.setText(Currency.display(balance) + Currency.suffix());
                 }
             }
             @Override public void onError(String message) {}
@@ -388,7 +412,7 @@ public class MainActivity extends AppCompatActivity {
             requestReload();
         }
         @Override public void onResolved(Bet bet, boolean iWon, BigDecimal profit, int result) {
-            log((iWon ? "WON +" : "LOST -") + Util.miniNum(profit) + " · " + bet.gameName()
+            log((iWon ? "WON +" : "LOST -") + Currency.show(Util.miniNum(profit), bet.tokenid()) + " · " + bet.gameName()
                     + " (rolled " + bet.game().pickLabel(result) + ")", iWon ? LOG_OK : LOG_ERR);
             recordResult(bet, iWon, profit, result, bet.iAmHouse(myKeys));   // triggers the celebration
             requestReload();
@@ -415,6 +439,7 @@ public class MainActivity extends AppCompatActivity {
         rb.resultLabel = result >= 0 ? bet.game().pickLabel(result) : "—";
         rb.won = iWon;
         rb.profit = Util.miniNum(profit);
+        rb.tokenid = bet.tokenid();
         rb.coinid = bet.coinid();
         rb.time = System.currentTimeMillis();
         rb.celebrated = false;
@@ -446,7 +471,7 @@ public class MainActivity extends AppCompatActivity {
         CasinoContract.Game game = CasinoContract.Game.byRange(target.range);
         int pick = target.pickIdx >= 0 ? target.pickIdx : 0;
         int result = target.resultIdx >= 0 ? target.resultIdx : (target.won ? pick : (pick + 1) % game.range);
-        ResultOverlay.show(this, game, pick, result, target.won, target.profit);
+        ResultOverlay.show(this, game, pick, result, target.won, target.profit, target.tokenid);
     }
 
     private void loadHistory() {
@@ -548,7 +573,7 @@ public class MainActivity extends AppCompatActivity {
                         boolean playerWins = (result == pick);
                         boolean iWon = isHouse ? !playerWins : playerWins;
                         BigDecimal profit = pnl(prev, iWon, isHouse);
-                        log((iWon ? "WON +" : "LOST -") + Util.miniNum(profit) + " · " + prev.gameName()
+                        log((iWon ? "WON +" : "LOST -") + Currency.show(Util.miniNum(profit), prev.tokenid()) + " · " + prev.gameName()
                                 + " (result " + prev.game().pickLabel(result) + ")", iWon ? LOG_OK : LOG_ERR);
                         recordResult(prev, iWon, profit, result, isHouse);   // EXACT result → triggers celebration
                         requestReload();
@@ -569,8 +594,11 @@ public class MainActivity extends AppCompatActivity {
     private void reconcileByPot(final Bet prev, final boolean isHouse, final String id) {
         final String myAddr = isHouse ? prev.houseAddr : prev.playerAddr;
         final BigDecimal total = Util.dec(prev.totalAmount);
+        final String tok = prev.tokenid();
         if (myAddr == null || myAddr.isEmpty()) return;
-        node.cmd("coins address:" + myAddr, new NodeApi.Cb() {
+        // Scope the pot match to the bet's OWN token — a same-value payout in the other currency
+        // (e.g. 2 Minima vs 2 USD) must never be mistaken for this pot landing.
+        node.cmd("coins address:" + myAddr + " tokenid:" + tok, new NodeApi.Cb() {
             @Override public void onResult(JSONObject json) {
                 boolean iGotPot = false;
                 JSONArray arr = json.optJSONArray("response");
@@ -586,7 +614,7 @@ public class MainActivity extends AppCompatActivity {
                 boolean playerWon = isHouse ? !iWon : iWon;
                 int result = playerWon ? prev.pick : nonPick(prev);   // rolled == pick iff player won
                 BigDecimal profit = pnl(prev, iWon, isHouse);
-                log((iWon ? "WON +" : "LOST -") + Util.miniNum(profit) + " · " + prev.gameName()
+                log((iWon ? "WON +" : "LOST -") + Currency.show(Util.miniNum(profit), prev.tokenid()) + " · " + prev.gameName()
                         + " (settled by " + (isHouse ? "player" : "house") + ")", iWon ? LOG_OK : LOG_ERR);
                 recordResult(prev, iWon, profit, result, isHouse);   // triggers the celebration
                 requestReload();
@@ -652,6 +680,37 @@ public class MainActivity extends AppCompatActivity {
     private void refreshAll() { for (BaseView v : views) v.refresh(); }
 
     private void updateSoundBtn() { soundBtn.setText(Theme.sound() ? "SND" : "MUTE"); }
+
+    /** (Re)build the four tab views and wire them to the pager/tabs. Called at startup and on a
+     *  currency switch — recreating the views is the simplest way to make ones built in their
+     *  constructor (HouseView) pick up the new accent + currency labels. Preserves the current tab.
+     *  applyAccent() runs LAST because setupWithViewPager rebuilds the tab strip from XML defaults. */
+    private void buildTabs() {
+        int cur = (pager.getAdapter() != null) ? pager.getCurrentItem() : 0;
+        views = new BaseView[]{ new PlayView(this), new HouseView(this), new MyBetsView(this), new HistoryView(this) };
+        pager.setAdapter(new MainPager(views, new String[]{"PLAY", "HOUSE", "MY BETS", "HISTORY"}));
+        tabs.setupWithViewPager(pager);
+        if (cur >= 0 && cur < views.length) pager.setCurrentItem(cur, false);
+        applyAccent();
+    }
+
+    /** Re-tint the header + tabs to the active currency's accent (gold for Minima, dollar-green
+     *  for USD) and set the currency-toggle button label. The header/tab colours come from compiled
+     *  XML resources, so they must be re-applied from Java whenever the currency — hence
+     *  {@link Theme#gold()} — changes. The tab bodies pick up the accent on their next refresh(). */
+    private void applyAccent() {
+        int accent = Theme.gold();
+        if (titleTv != null) titleTv.setTextColor(accent);
+        if (balanceTv != null) balanceTv.setTextColor(accent);
+        if (tabs != null) {
+            tabs.setSelectedTabIndicatorColor(accent);
+            tabs.setTabTextColors(Theme.text(), accent);
+        }
+        if (ccyBtn != null) {
+            ccyBtn.setText(Currency.label());
+            ccyBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));
+        }
+    }
 
     private void setPaired(boolean paired) {
         pairingBanner.setVisibility(paired ? View.GONE : View.VISIBLE);
@@ -773,4 +832,23 @@ public class MainActivity extends AppCompatActivity {
     public String myHexAddr() { return myHexAddr; }
     public boolean identityReady() { return identityReady; }
     public String balance() { return balance; }
+
+    /**
+     * Bets to DISPLAY — only the active currency's, so the Play/My Bets tabs show one casino at a
+     * time. The internal {@code bets} field keeps ALL tokens so auto-reveal/resolve still runs for
+     * every currency's bets regardless of the toggle (a USD bet must not strand while you're viewing
+     * Minima). Discovery is therefore never token-filtered; only this view accessor is.
+     */
+    public List<Bet> visibleBets() {
+        String tok = Currency.tokenId();
+        List<Bet> out = new ArrayList<>();
+        for (Bet b : bets) if (sameToken(b.tokenid(), tok)) out.add(b);
+        return out;
+    }
+
+    /** Token equality treating null / "" / "0x00" all as native Minima. */
+    private static boolean sameToken(String a, String b) {
+        boolean am = Util.isMinima(a), bm = Util.isMinima(b);
+        return am ? bm : a.equalsIgnoreCase(b);
+    }
 }

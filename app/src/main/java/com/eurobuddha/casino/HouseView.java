@@ -38,7 +38,7 @@ public class HouseView extends BaseView {
         for (Game g : Game.values()) presetRow.addView(presetButton(g));
         card.addView(presetRow);
 
-        card.addView(Ui.label(act, "Bet amount (Minima)"));
+        card.addView(Ui.label(act, "Bet amount (" + Currency.label() + ")"));
         amount = new EditText(act);
         amount.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
         amount.setText("1");
@@ -106,8 +106,8 @@ public class HouseView extends BaseView {
         if (stake.compareTo(BigDecimal.ZERO) <= 0) stake = bet;
         BigDecimal pot = stake.add(bet);
         BigDecimal win = bet.multiply(BigDecimal.valueOf(selected.payout));
-        summary.setText("You lock " + Util.miniNum(stake) + " · player stakes " + Util.miniNum(bet)
-                + "\nPot " + Util.miniNum(pot) + " · player wins " + Util.miniNum(win)
+        summary.setText("You lock " + Currency.show(Util.miniNum(stake)) + " · player stakes " + Currency.show(Util.miniNum(bet))
+                + "\nPot " + Currency.show(Util.miniNum(pot)) + " · player wins " + Currency.show(Util.miniNum(win))
                 + " at " + selected.oddsAgainst() + ":1 (1/" + selected.range + " chance)");
     }
 
@@ -123,7 +123,7 @@ public class HouseView extends BaseView {
                 status.setTextColor(Theme.amber());
                 status.setText("Bet sent — confirming over the next few blocks…");
                 act.markPending(act.pendingCreate(), "Created " + selected.name + " bet ("
-                        + Util.miniNum(bet) + " · " + selected.oddsAgainst() + ":1)");
+                        + Currency.show(Util.miniNum(bet)) + " · " + selected.oddsAgainst() + ":1)");
                 act.requestReload();
             }
             @Override public void onFailed(String message) {

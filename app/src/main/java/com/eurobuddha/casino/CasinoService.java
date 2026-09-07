@@ -205,8 +205,9 @@ public class CasinoService extends Service {
         }
         @Override public void onResolved(Bet bet, boolean iWon, BigDecimal profit, int result) {
             recordHistory(bet, iWon, profit, result);
-            notifyAlert(iWon ? "You won +" + Util.miniNum(profit) + " Minima!"
-                            : "You lost -" + Util.miniNum(profit) + " Minima",
+            String ccy = Currency.nameFor(bet.tokenid());
+            notifyAlert(iWon ? "You won +" + Util.miniNum(profit) + " " + ccy + "!"
+                            : "You lost -" + Util.miniNum(profit) + " " + ccy,
                     bet.gameName() + " — rolled " + bet.game().pickLabel(result));
         }
         @Override public void onError(String message) {}
@@ -228,6 +229,7 @@ public class CasinoService extends Service {
         rb.resultLabel = result >= 0 ? bet.game().pickLabel(result) : "—";
         rb.won = iWon;
         rb.profit = Util.miniNum(profit);
+        rb.tokenid = bet.tokenid();
         rb.coinid = bet.coinid();
         rb.time = System.currentTimeMillis();
         rb.celebrated = false;

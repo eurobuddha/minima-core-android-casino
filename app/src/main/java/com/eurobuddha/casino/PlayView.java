@@ -40,11 +40,11 @@ public class PlayView extends BaseView {
 
         // Prune the take-guard: drop bets that have left phase 0 (taken / cancelled / gone).
         Set<String> openIds = new HashSet<>();
-        for (Bet b : act.bets()) if (b.phase == 0) openIds.add(b.coinid());
+        for (Bet b : act.visibleBets()) if (b.phase == 0) openIds.add(b.coinid());
         taking.retainAll(openIds);
 
         int shown = 0;
-        for (Bet b : act.bets()) {
+        for (Bet b : act.visibleBets()) {
             if (b.phase != 0) continue;
             if (b.iAmHouse(act.myKeys())) continue;     // can't take your own bet
             container.addView(betCard(b));
@@ -69,9 +69,9 @@ public class PlayView extends BaseView {
         card.addView(header);
 
         TextView info = Ui.text(act,
-                "Stake " + Util.miniNum(Util.dec(b.betAmount)) + " · pot "
-                        + Util.miniNum(Util.dec(b.totalAmount)) + " · win "
-                        + Util.miniNum(Util.dec(b.betAmount).multiply(java.math.BigDecimal.valueOf(g.payout))),
+                "Stake " + Currency.show(b.betAmount, b.tokenid()) + " · pot "
+                        + Currency.show(b.totalAmount, b.tokenid()) + " · win "
+                        + Currency.show(Util.miniNum(Util.dec(b.betAmount).multiply(java.math.BigDecimal.valueOf(g.payout))), b.tokenid()),
                 Theme.dim(), 11, false);
         info.setPadding(0, Ui.dp(act, 6), 0, Ui.dp(act, 10));
         card.addView(info);

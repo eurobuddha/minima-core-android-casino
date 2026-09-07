@@ -18,7 +18,7 @@ public final class ResultOverlay {
 
     private ResultOverlay() {}
 
-    public static void show(MainActivity act, Game game, int pick, int result, boolean iWon, String profit) {
+    public static void show(MainActivity act, Game game, int pick, int result, boolean iWon, String profit, String tokenid) {
         final ViewGroup root = act.findViewById(android.R.id.content);
         if (root == null) return;
 
@@ -81,7 +81,7 @@ public final class ResultOverlay {
             if (settled[0]) return;
             settled[0] = true;
             title.setText(iWon ? "YOU WIN" : "YOU LOSE");
-            detail.setText((iWon ? "+" : "-") + profit + " Minima\nPicked "
+            detail.setText((iWon ? "+" : "-") + Currency.show(profit, tokenid) + "\nPicked "
                     + game.pickLabel(pick) + "  ·  Rolled "
                     + (result >= 0 ? game.pickLabel(result) : "—"));
             title.setVisibility(View.VISIBLE);

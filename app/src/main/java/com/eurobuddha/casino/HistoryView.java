@@ -32,40 +32,45 @@ public class HistoryView extends BaseView {
         container.removeAllViews();
         container.addView(Ui.text(act, "HISTORY", Theme.gold(), 16, true));
 
-        // Sub-header line: the "last N resolved bets" caption on the left, and — on the SAME line,
-        // right-aligned — the net P&L across the stored history (the running total of the same +/-
-        // profit figures each row below shows). Won profits add, lost profits subtract.
+        // Only the ACTIVE currency's resolved bets — History mirrors the currency toggle, and a Net
+        // that mixed Minima and USD would be meaningless. Amounts render at each row's own token
+        // resolution (full precision for USD, 5-dp cap for Minima) with the currency suffix.
+        String tok = Currency.tokenId();
+        java.util.List<ResolvedBet> mine = new java.util.ArrayList<>();
+        for (ResolvedBet r : act.history()) if (sameToken(r.tokenid, tok)) mine.add(r);
+
+        // Sub-header line: the "N resolved bets" caption on the left, and — on the SAME line,
+        // right-aligned — the net P&L across this currency's stored history. Won adds, lost subtracts.
         LinearLayout subRow = Ui.row(act);
         subRow.setPadding(0, Ui.dp(act, 2), 0, Ui.dp(act, 12));
-        int n = act.history().size();
-        String caption = "Your " + n + " resolved bet" + (n == 1 ? "" : "s") + ".";
+        int n = mine.size();
+        String caption = "Your " + n + " " + Currency.label() + " bet" + (n == 1 ? "" : "s") + ".";
         subRow.addView(Ui.text(act, caption, Theme.dim(), 11, false), Ui.lpRow(act, 1));
-        if (!act.history().isEmpty()) {
+        if (!mine.isEmpty()) {
             BigDecimal net = BigDecimal.ZERO;
-            for (ResolvedBet r : act.history()) {
+            for (ResolvedBet r : mine) {
                 BigDecimal p = Util.dec(r.profit);
                 net = r.won ? net.add(p) : net.subtract(p);
             }
             int sign = net.signum();
-            String netTxt = "Net " + (sign < 0 ? "-" : "+") + Util.displayAmount(net.abs());
+            String netTxt = "Net " + (sign < 0 ? "-" : "+") + Currency.show(Util.miniNum(net.abs()), tok);
             int netColor = sign > 0 ? Theme.green() : sign < 0 ? Theme.red() : Theme.dim();
             subRow.addView(Ui.text(act, netTxt, netColor, 11, true));
         }
         container.addView(subRow);
 
-        if (act.history().isEmpty()) {
-            TextView empty = Ui.text(act, "No completed bets yet.", Theme.dim(), 12, false);
+        if (mine.isEmpty()) {
+            TextView empty = Ui.text(act, "No completed " + Currency.label() + " bets yet.", Theme.dim(), 12, false);
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(0, Ui.dp(act, 40), 0, 0);
             container.addView(empty);
             return;
         }
-        java.util.List<ResolvedBet> all = act.history();
-        int shown = Math.min(all.size(), RENDER_LIMIT);
-        for (int i = 0; i < shown; i++) container.addView(row(all.get(i)));
-        if (all.size() > shown) {
+        int shown = Math.min(mine.size(), RENDER_LIMIT);
+        for (int i = 0; i < shown; i++) container.addView(row(mine.get(i)));
+        if (mine.size() > shown) {
             TextView more = Ui.text(act,
-                    "+ " + (all.size() - shown) + " older bets — counted in Net above, not shown here.",
+                    "+ " + (mine.size() - shown) + " older bets — counted in Net above, not shown here.",
                     Theme.dim(), 10, false);
             more.setGravity(Gravity.CENTER);
             more.setPadding(0, Ui.dp(act, 8), 0, Ui.dp(act, 4));
@@ -73,11 +78,17 @@ public class HistoryView extends BaseView {
         }
     }
 
+    /** Token equality treating null / "" / "0x00" all as native Minima. */
+    private static boolean sameToken(String a, String b) {
+        boolean am = Util.isMinima(a), bm = Util.isMinima(b);
+        return am ? bm : a.equalsIgnoreCase(b);
+    }
+
     private LinearLayout row(ResolvedBet r) {
         LinearLayout card = Ui.card(act);
         LinearLayout top = Ui.row(act);
         top.addView(Ui.text(act, r.game + "  ·  " + r.role, Theme.text(), 13, true), Ui.lpRow(act, 1));
-        TextView pl = Ui.text(act, (r.won ? "+" : "-") + r.profit, r.won ? Theme.green() : Theme.red(), 13, true);
+        TextView pl = Ui.text(act, (r.won ? "+" : "-") + Currency.show(r.profit, r.tokenid), r.won ? Theme.green() : Theme.red(), 13, true);
         top.addView(pl);
         card.addView(top);
 
