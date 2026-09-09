@@ -139,6 +139,19 @@
         android:background="@color/gold"
         android:textSize="12sp" />
 
+    <TextView
+        android:id="@+id/timeoutBanner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:visibility="gone"
+        android:focusable="true"
+        android:textColor="@color/bg"
+        android:background="@color/gold"
+        android:textSize="12sp" />
+
     <com.google.android.material.tabs.TabLayout
         android:id="@+id/tabs"
         android:layout_width="match_parent"

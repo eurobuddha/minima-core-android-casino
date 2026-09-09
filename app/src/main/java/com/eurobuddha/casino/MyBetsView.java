@@ -46,7 +46,7 @@ public class MyBetsView extends BaseView {
         container.addView(sub);
 
         int shown = 0;
-        for (Bet b : act.visibleBets()) {
+        for (Bet b : act.bets()) {
             if (!b.isMine(act.myKeys())) continue;
             container.addView(betCard(b));
             shown++;
@@ -61,7 +61,7 @@ public class MyBetsView extends BaseView {
 
     private String signature() {
         StringBuilder sb = new StringBuilder();
-        for (Bet b : act.visibleBets()) {
+        for (Bet b : act.bets()) {
             if (!b.isMine(act.myKeys())) continue;
             sb.append(b.coinid()).append(':').append(b.phase)
               .append(b.timedOut(act.chainBlock()) ? "T" : "").append('|');
@@ -75,7 +75,8 @@ public class MyBetsView extends BaseView {
         LinearLayout card = Ui.card(act);
 
         LinearLayout header = Ui.row(act);
-        header.addView(Ui.text(act, g.icon + "  " + g.name, Theme.gold(), 18, true), Ui.lpRow(act, 1));
+        header.addView(Ui.text(act, g.icon + "  " + g.name + " · " + Currency.nameFor(b.tokenid()),
+                Theme.gold(), 18, true), Ui.lpRow(act, 1));
         header.addView(Ui.badge(act, phaseLabel(b.phase), Theme.bg(), phaseColor(b.phase)));
         card.addView(header);
 
@@ -157,10 +158,12 @@ public class MyBetsView extends BaseView {
         else if (b.phase == 1) msg = isHouse ? "Revealing house secret…" : "Waiting for house to reveal…";
         else msg = isHouse ? "Waiting for player to resolve…" : "Resolving — paying out…";
         if (b.phase >= 1 && b.coin.created >= 0) {
-            int age = Math.max(0, act.chainBlock() - (int) b.coin.created);
-            int left = b.timeout - age;
+            long age = Math.max(0L, act.chainBlock() - b.coin.created);
+            long left = b.timeout + 1L - age;  // covenant requires age > timeout, not >=
             if (left > 0) msg += "\n⏳ Timeout in " + left + " block" + (left == 1 ? "" : "s") + " (" + age + " elapsed)";
-            else msg += "\nTimed out — you can reclaim the funds.";
+            else msg += b.canClaimTimeout(act.myKeys(), act.chainBlock())
+                    ? "\nTimed out — you can claim the pot."
+                    : "\nTimed out — the counterparty can claim the pot.";
         }
         return msg;
     }
@@ -172,7 +175,7 @@ public class MyBetsView extends BaseView {
 
     /** Tick the per-card timeout counters without rebuilding (keeps the spin smooth). */
     private void updateLiveCounters() {
-        for (Bet b : act.visibleBets()) {
+        for (Bet b : act.bets()) {
             if (!b.isMine(act.myKeys())) continue;
             TextView t = statusViews.get(b.coinid());
             if (t != null) applyStatus(t, b, b.iAmHouse(act.myKeys()));
@@ -215,7 +218,7 @@ public class MyBetsView extends BaseView {
             actions.addView(resolve);
             any = true;
         }
-        if (b.timedOut(act.chainBlock()) && b.phase >= 1) {
+        if (b.canClaimTimeout(act.myKeys(), act.chainBlock())) {
             Button claim = Ui.button(act, "Claim Timeout", Theme.pink(), Theme.text());
             if (actions.getChildCount() > 0) {
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(

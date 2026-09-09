@@ -66,6 +66,12 @@ public class Bet {
         return coin.created >= 0 && (tipBlock - coin.created) > timeout;
     }
 
+    /** Same E1/E2 eligibility as the covenant and the MDS casino's manual claim buttons. */
+    public boolean canClaimTimeout(Set<String> myKeys, long tipBlock) {
+        return timedOut(tipBlock)
+                && ((phase == 1 && iAmPlayer(myKeys)) || (phase == 2 && iAmHouse(myKeys)));
+    }
+
     private static int parseInt(String s, int def) {
         if (s == null || s.isEmpty()) return def;
         try { return Integer.parseInt(s.trim()); } catch (NumberFormatException e) { return def; }

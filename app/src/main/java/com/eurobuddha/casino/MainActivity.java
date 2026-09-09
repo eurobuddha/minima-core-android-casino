@@ -55,7 +55,7 @@ public class MainActivity extends AppCompatActivity {
 
     private BaseView[] views;
     private ViewPager pager;
-    private TextView balanceTv, blockTv, tickerTv, titleTv, subtitleTv;
+    private TextView balanceTv, blockTv, tickerTv, titleTv, subtitleTv, timeoutBanner;
     private View pairingBanner, liveDot;
     private Button soundBtn, ccyBtn;
     private TabLayout tabs;
@@ -117,6 +117,8 @@ public class MainActivity extends AppCompatActivity {
         pairingBanner = findViewById(R.id.pairingBanner);
         soundBtn = findViewById(R.id.btnSound);
         ccyBtn = findViewById(R.id.btnCcy);
+        timeoutBanner = findViewById(R.id.timeoutBanner);
+        timeoutBanner.setOnClickListener(v -> switchTab(TAB_MYBETS));
         tickerTv.setOnClickListener(v -> showLogDialog());
 
         secrets = new SecretStore(this);
@@ -133,6 +135,7 @@ public class MainActivity extends AppCompatActivity {
             @Override public void onPageSelected(int position) { if (position < views.length) views[position].onShown(); }
         });
         buildTabs();
+        openTimeoutClaims(getIntent());
 
         soundBtn.setOnClickListener(v -> {
             boolean on = !Theme.sound();
@@ -145,12 +148,12 @@ public class MainActivity extends AppCompatActivity {
         // Currency toggle: MINIMA <-> USD (MxUSD). Mirrors the sound button (click -> persist ->
         // update label), but a currency change also re-tints the accent and rebuilds every view so
         // the whole app switches token AND colour at once. The active currency's bets/balance are
-        // then re-queried; the two currencies never mix (discovery filters by tokenid).
+        // then re-queried. Discovery and My Bets retain every currency for manual claims/cancels.
         ccyBtn.setOnClickListener(v -> {
             Theme.setDollar(this, !Theme.dollar());
             balance = "0"; balanceTv.setText("0");   // clear stale figure until the new token loads
-            bets.clear();
             buildTabs();          // recreate every tab view so it picks up the new accent + labels
+            refreshAll();
             requestReload();      // re-query balance + bets for the new currency
             if (Currency.isDollar()) log("Switched to USD (MxUSD) — keep a little Minima for network fees", LOG_OK);
             else log("Switched to Minima", LOG_OK);
@@ -173,6 +176,19 @@ public class MainActivity extends AppCompatActivity {
 
         requestNotifPermission();
         loadIdentity();
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        openTimeoutClaims(intent);
+    }
+
+    private void openTimeoutClaims(Intent intent) {
+        if (intent != null && TimeoutAlerts.OPEN_MY_BETS.equals(intent.getAction())) {
+            switchTab(TAB_MYBETS);
+            intent.setAction(null);  // consume navigation so a later recreation preserves normal use
+        }
     }
 
     @Override protected void onResume() {
@@ -261,6 +277,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
                 if (!myPubkey.isEmpty()) myKeys.add(myPubkey);
+                refreshAll();
                 sweepForeignTracking();
             }
             @Override public void onError(String message) { /* best-effort; identity already set */ }
@@ -380,9 +397,10 @@ public class MainActivity extends AppCompatActivity {
         // sub-2048 cap silently hides >cap-old timeout claims on stock nodes (stranded pots).
         node.cmd("coins address:" + CasinoContract.SCRIPT_ADDR + " depth:4096", new NodeApi.Cb() {
             @Override public void onResult(JSONObject json) {
+                JSONArray arr = json.optJSONArray("response");
+                if (!json.optBoolean("status", false) || arr == null) return;
                 setPaired(true);
                 bets.clear();
-                JSONArray arr = json.optJSONArray("response");
                 if (arr != null) {
                     for (int i = 0; i < arr.length(); i++) {
                         JSONObject c = arr.optJSONObject(i);
@@ -395,6 +413,8 @@ public class MainActivity extends AppCompatActivity {
                 snapshotMine();
                 updatePending();
                 refreshAll();
+                if (identityReady && !myKeys.isEmpty())
+                    TimeoutAlerts.update(MainActivity.this, new TimeoutClaims(bets, myKeys, chainBlock));
                 if (auto != null && identityReady) {
                     auto.process(new ArrayList<>(bets), new HashSet<>(myKeys), chainBlock, autoListener);
                 }
@@ -677,7 +697,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ===== ui helpers =====
-    private void refreshAll() { for (BaseView v : views) v.refresh(); }
+    private void refreshAll() {
+        for (BaseView v : views) v.refresh();
+        TimeoutClaims claims = new TimeoutClaims(bets, myKeys, chainBlock);
+        timeoutBanner.setVisibility(claims.coinids.isEmpty() ? View.GONE : View.VISIBLE);
+        timeoutBanner.setText(claims.summary() + " · Open My Bets →");
+    }
 
     private void updateSoundBtn() { soundBtn.setText(Theme.sound() ? "SND" : "MUTE"); }
 
@@ -834,8 +859,8 @@ public class MainActivity extends AppCompatActivity {
     public String balance() { return balance; }
 
     /**
-     * Bets to DISPLAY — only the active currency's, so the Play/My Bets tabs show one casino at a
-     * time. The internal {@code bets} field keeps ALL tokens so auto-reveal/resolve still runs for
+     * Bets to DISPLAY on Play — only the active currency's. My Bets uses all currencies so manual
+     * actions stay reachable. The internal {@code bets} field keeps ALL tokens so auto-reveal/resolve still runs for
      * every currency's bets regardless of the toggle (a USD bet must not strand while you're viewing
      * Minima). Discovery is therefore never token-filtered; only this view accessor is.
      */

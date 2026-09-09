@@ -28,10 +28,15 @@ because the system default JDK (26) is too new for Gradle 8.11.
 ## Tabs
 - **PLAY** — open bets from others; pick a side and Take Bet.
 - **HOUSE** — choose a game + amount, Create Bet.
-- **MY BETS** — your active games; auto reveal/resolve, manual Cancel / Resolve / Claim Timeout.
+- **MY BETS** — your active games in both currencies, labelled per bet; auto reveal/resolve,
+  manual Cancel / Resolve / Claim Timeout.
 - **HISTORY** — last 50 resolved bets with P&L.
 
 ## Status / follow-ups
+- v0.7.1: eligible timeout claims in either currency appear in a banner on every tab and a
+  notification that opens My Bets. Alerts are deduplicated across scans/restarts and removed
+  when no claims remain. Notifications require Android permission and the casino service/node
+  to be running; the in-app banner works without notification permission. Claims stay manual.
 - v0.1.0, versionCode 1. Releases archived under `releases/` (never overwrite — bump semver).
 - House-side history is recorded when *this* device resolves; pure-house results settled by the
   counterparty aren't yet back-filled from chain (a `NEWBALANCE` reconciliation pass — TODO).

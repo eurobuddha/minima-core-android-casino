@@ -147,6 +147,7 @@ public class CasinoService extends Service {
             @Override public void onResult(JSONObject json) {
                 List<Bet> bets = new ArrayList<>();
                 JSONArray arr = json.optJSONArray("response");
+                if (!json.optBoolean("status", false) || arr == null) return;
                 if (arr != null) for (int i = 0; i < arr.length(); i++) {
                     JSONObject c = arr.optJSONObject(i);
                     if (c == null) continue;
@@ -154,6 +155,7 @@ public class CasinoService extends Service {
                     if (b.isValid()) bets.add(b);
                 }
                 auto.process(bets, new HashSet<>(myKeys), lastBlock, listener);
+                TimeoutAlerts.update(CasinoService.this, new TimeoutClaims(bets, myKeys, lastBlock));
                 sweepForeignTracking();   // shed any foreign coins the node adopted since last block
             }
             @Override public void onError(String m) {}
