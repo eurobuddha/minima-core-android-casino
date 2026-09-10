@@ -427,6 +427,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private final AutoProcessor.Listener autoListener = new AutoProcessor.Listener() {
+        @Override public void onOfferMaintained(Bet bet, boolean cancelled) {
+            log((cancelled ? "Offer cancellation posted" : "Open offer renewed") + " · "
+                    + Currency.nameFor(bet.tokenid()), LOG_OK);
+            requestReload();
+        }
         @Override public void onRevealed(Bet bet) {
             log(bet.gameName() + " — house secret revealed, awaiting player resolve", LOG_OK);
             requestReload();
@@ -437,7 +442,9 @@ public class MainActivity extends AppCompatActivity {
             recordResult(bet, iWon, profit, result, bet.iAmHouse(myKeys));   // triggers the celebration
             requestReload();
         }
-        @Override public void onError(String message) { /* transient; will retry next block */ }
+        @Override public void onError(String message) {
+            if (message.startsWith("Offer keepalive")) log(message, LOG_ERR);
+        }
     };
 
     // ===== result + history =====

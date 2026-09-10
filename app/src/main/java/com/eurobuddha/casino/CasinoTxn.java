@@ -233,7 +233,48 @@ public class CasinoTxn {
     }
 
     // ===================================================================== cancel (phase 0 house)
+    public boolean cancelRequested(Bet bet) {
+        return "1".equals(secrets.get("casino_cancel_for_" + bet.houseCommit));
+    }
+
+    /** Refresh only the existing collateral coin; never fund a replacement from wallet coins. */
+    public void maintainOpen(Bet bet, Result cb) {
+        if (cancelRequested(bet)) { cancel(bet, cb); return; }
+        if (!OfferKeepAlive.valid(bet)) { cb.onFailed("Invalid offer: keepalive skipped"); return; }
+        String secret = secrets.houseSecret(bet.houseCommit);
+        if (secret == null || secret.isEmpty()) { cb.onFailed("Offer keepalive blocked: house secret missing"); return; }
+        String txid = "casino_renew_" + tag();
+        CmdChain.run(node, OfferKeepAlive.commands(bet, txid), "txndelete id:" + txid, new CmdChain.Done() {
+            @Override public void ok(JSONObject last) {
+                if (cancelRequested(bet)) {
+                    node.cmd("txndelete id:" + txid, new NodeApi.Cb() {
+                        @Override public void onResult(JSONObject ignored) { cb.onFailed("Renewal stopped: cancellation requested"); }
+                        @Override public void onError(String message) { cb.onFailed(message); }
+                    });
+                    return;
+                }
+                post(java.util.Collections.singletonList("txnpost id:" + txid), txid, new Result() {
+                    @Override public void onPosted(String txpowid) {
+                        node.cmd("txndelete id:" + txid, new NodeApi.Cb() {
+                            @Override public void onResult(JSONObject ignored) {}
+                            @Override public void onError(String ignored) {}
+                        });
+                        cb.onPosted(txpowid);
+                    }
+                    @Override public void onFailed(String message) { cb.onFailed(message); }
+                });
+            }
+            @Override public void fail(String message) { cb.onFailed(message); }
+        });
+    }
+
     public void cancel(Bet bet, Result cb) {
+        if (bet.phase != 0) { cb.onFailed("Only an untaken bet can be cancelled"); return; }
+        // Keyed by commitment, which survives renewal. If renewal already posted, the next scan
+        // cancels its phase-0 successor; a taken/revealed successor is NEVER renewed or cancelled.
+        if (!secrets.putDurable("casino_cancel_for_" + bet.houseCommit, "1")) {
+            cb.onFailed("Could not save cancellation intent"); return;
+        }
         String txid = "cancel_" + tag();
         List<String> cmds = new ArrayList<>();
         cmds.add("txncreate id:" + txid);

@@ -202,6 +202,9 @@ public class CasinoService extends Service {
     }
 
     private final AutoProcessor.Listener listener = new AutoProcessor.Listener() {
+        @Override public void onOfferMaintained(Bet bet, boolean cancelled) {
+            android.util.Log.i("CasinoService", (cancelled ? "Offer cancellation posted: " : "Open offer renewed: ") + bet.coinid());
+        }
         @Override public void onRevealed(Bet bet) {
             notifyAlert("Secret revealed", bet.gameName() + " — waiting for player to resolve");
         }
@@ -212,7 +215,9 @@ public class CasinoService extends Service {
                             : "You lost -" + Util.miniNum(profit) + " " + ccy,
                     bet.gameName() + " — rolled " + bet.game().pickLabel(result));
         }
-        @Override public void onError(String message) {}
+        @Override public void onError(String message) {
+            if (message.startsWith("Offer keepalive")) android.util.Log.w("CasinoService", message);
+        }
     };
 
     /**

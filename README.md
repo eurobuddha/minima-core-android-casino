@@ -33,6 +33,8 @@ because the system default JDK (26) is too new for Gradle 8.11.
 - **HISTORY** — last 50 resolved bets with P&L.
 
 ## Status / follow-ups
+- v0.7.2: open house offers in both currencies renew automatically at 500 blocks. See
+  [keepalive behavior and verification](OPEN-OFFER-KEEPALIVE.md).
 - v0.7.1: eligible timeout claims in either currency appear in a banner on every tab and a
   notification that opens My Bets. Alerts are deduplicated across scans/restarts and removed
   when no claims remain. Notifications require Android permission and the casino service/node
