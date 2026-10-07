@@ -21,7 +21,7 @@ Requires JDK 21 (Android Studio's JBR). Pinned in `gradle.properties` via `org.g
 because the system default JDK (26) is too new for Gradle 8.11.
 
 ## Install & pair
-1. Install the Minima Core node app (`org.minimarex.minimacore`) on the device.
+1. Install the Minima Core node app (`com.eurobuddha.minimacore`) on the device.
 2. Sideload this APK; open Minima Core → Apps → enable **Zero Edge Casino** (the in-app banner
    clears once enabled).
 
