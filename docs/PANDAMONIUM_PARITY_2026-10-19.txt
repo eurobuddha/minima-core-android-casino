@@ -1,0 +1,12 @@
+casino 0.7.4 / code704 — standalone display parity
+Reused Pandamonium scripts/adapt-pandamonium-casino-languages.py display blocks.
+Result card measures at available width; currency/sound controls have 48dp
+minimum targets and accessibility labels; tabs can scroll.
+Standalone English labels and existing operations retained.
+Reviewed changed source/resources and callers; no blocking finding in this port.
+25 existing tests pass. Offline assembleRelease and lintRelease successful:
+0 errors, 67 warnings. Actual APK package/version and family signature verified.
+No Fold check, installation, live transaction or publication.
+Candidate: dist/casino-0.7.4-candidate.apk
+SHA256: ba7a7cc7a06fd0af414e84bb79aeb74d5939fca11500f9a4918241704031387e
+Broader application review remains in progress.

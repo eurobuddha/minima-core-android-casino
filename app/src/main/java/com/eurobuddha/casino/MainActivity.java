@@ -711,7 +711,7 @@ public class MainActivity extends AppCompatActivity {
         timeoutBanner.setText(claims.summary() + " · Open My Bets →");
     }
 
-    private void updateSoundBtn() { soundBtn.setText(Theme.sound() ? "SND" : "MUTE"); }
+    private void updateSoundBtn() { soundBtn.setText(Theme.sound() ? "SND" : "MUTE"); soundBtn.setContentDescription(Theme.sound() ? "Sound on" : "Sound off"); }
 
     /** (Re)build the four tab views and wire them to the pager/tabs. Called at startup and on a
      *  currency switch — recreating the views is the simplest way to make ones built in their
@@ -740,6 +740,7 @@ public class MainActivity extends AppCompatActivity {
         }
         if (ccyBtn != null) {
             ccyBtn.setText(Currency.label());
+            ccyBtn.setContentDescription("Change currency: " + Currency.label());
             ccyBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));
         }
     }

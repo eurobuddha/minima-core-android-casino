@@ -31,8 +31,9 @@ public final class ResultOverlay {
         LinearLayout card = Ui.col(act);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
         FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         clp.gravity = Gravity.CENTER;
+        clp.leftMargin = clp.rightMargin = Ui.dp(act, 20);
         card.setLayoutParams(clp);
 
         TextView game_t = Ui.text(act, game.icon + "  " + game.name.toUpperCase(), Theme.dim(), 12, true);
